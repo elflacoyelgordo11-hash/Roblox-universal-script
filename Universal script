@@ -353,7 +353,7 @@ MovementTab:CreateToggle({
     CurrentValue = jumpPowerEnabled,
     Flag = "JumpToggle",
     Callback = function(Value)
-        jumpPowerEnabled = Value
+        JumpPowerEnabled = Value
         if Value then
             if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
                 LocalPlayer.Character.Humanoid.JumpPower = currentJumpPower
@@ -372,13 +372,20 @@ MovementTab:CreateSlider({
     Increment = 5,
     Suffix = "",
     CurrentValue = currentJumpPower,
-    Flag = "JumpPowerValue",
+    Flag = "jumpPowerValue",
     Callback = function(Value)
         currentJumpPower = Value
         if jumpPowerEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
             LocalPlayer.Character.Humanoid.JumpPower = Value
         end
     end,
+})
+
+SettingsTab:CreateButton({
+   Name = "Rejoin",
+   Callback = function()
+game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId,game.JobId)
+   end,
 })
 
 SettingsTab:CreateButton({
