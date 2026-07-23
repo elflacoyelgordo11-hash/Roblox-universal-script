@@ -488,7 +488,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.0.1 loaded successfully!",
+    Content = "Version 1.0.2 loaded successfully!",
     Duration = 3,
     Image = nil
 })
