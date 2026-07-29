@@ -26,6 +26,9 @@ local walkSpeedEnabled = false
 local jumpPowerEnabled = false
 local currentWalkSpeed = defaultWalkSpeed
 local currentJumpPower = defaultJumpPower
+local InfiniteJump = false
+local JumpConnection
+local JumpHeight = 50
 -- Game stuff
 local bypassEnabled = false
 local attachedToBall = false
@@ -348,29 +351,47 @@ MovementTab:CreateSlider({
     end,
 })
 
-MovementTab:CreateButton({
-        Name = "Infinite Jump",
-        Callback = function()
-            local Player = game:GetService'Players'.LocalPlayer;
-            local UIS = game:GetService'UserInputService';
-             
-            _G.JumpHeight = 50;
-             
-            function Action(Object, Function) if Object ~= nil then Function(Object); end end
-             
-            UIS.InputBegan:connect(function(UserInput)
-                if UserInput.UserInputType == Enum.UserInputType.Keyboard and UserInput.KeyCode == Enum.KeyCode.Space then
-                    Action(Player.Character.Humanoid, function(self)
-                        if self:GetState() == Enum.HumanoidStateType.Jumping or self:GetState() == Enum.HumanoidStateType.Freefall then
-                            Action(self.Parent.HumanoidRootPart, function(self)
-                                self.Velocity = Vector3.new(0, _G.JumpHeight, 0);
-                            end)
+MovementTab:CreateToggle({
+    Name = "Infinite Jump",
+    CurrentValue = false,
+    Flag = "InfiniteJump",
+    Callback = function(Value)
+        InfiniteJump = Value
+
+        if InfiniteJump then
+            local Player = game:GetService("Players").LocalPlayer
+            local UIS = game:GetService("UserInputService")
+
+            JumpConnection = UIS.InputBegan:Connect(function(UserInput, GameProcessed)
+                if GameProcessed then return end
+
+                if UserInput.UserInputType == Enum.UserInputType.Keyboard
+                and UserInput.KeyCode == Enum.KeyCode.Space then
+
+                    local Character = Player.Character
+                    if not Character then return end
+
+                    local Humanoid = Character:FindFirstChild("Humanoid")
+                    local Root = Character:FindFirstChild("HumanoidRootPart")
+
+                    if Humanoid and Root then
+                        local State = Humanoid:GetState()
+
+                        if State == Enum.HumanoidStateType.Jumping
+                        or State == Enum.HumanoidStateType.Freefall then
+                            Root.Velocity = Vector3.new(0, JumpHeight, 0)
                         end
-                    end)
+                    end
                 end
             end)
-        end,
-     })
+        else
+            if JumpConnection then
+                JumpConnection:Disconnect()
+                JumpConnection = nil
+            end
+        end
+    end,
+})
 
 MovementTab:CreateToggle({
     Name = "Jump Power",
@@ -408,9 +429,16 @@ MovementTab:CreateSlider({
 SettingsTab:CreateButton({
    Name = "Open DEX",
     Callback = function()
-    loadstring(game:HttpGet(('https://gist.githubusercontent.com/DinosaurXxX/b757fe011e7e600c0873f967fe427dc2/raw/ee5324771f017073fc30e640323ac2a9b3bfc550/dark%2520dex%2520v4'),true))()
+    loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Dark-Dex-245188"))()
         end,
      })
+
+SettingsTab:CreateButton({
+   Name = "Open Simple Spy",
+   Callback = function()
+   loadstring(game:HttpGet("https://raw.githubusercontent.com/78n/SimpleSpy/main/SimpleSpySource.lua"))()
+   end,
+})
 
 SettingsTab:CreateButton({
    Name = "Rejoin",
@@ -562,7 +590,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.0.4"
+    Content = "1.0.5"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -645,7 +673,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.0.4 loaded successfully!",
+    Content = "Version 1.0.5 loaded successfully!",
     Duration = 3,
     Image = nil
 })
