@@ -419,6 +419,21 @@ game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId,game.Job
    end,
 })
 
+SettingsTab:CreateButton({
+   Name = "UNC Test",
+   Callback = function()
+   loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-UNC-TEST-136099"))()
+   end,
+})
+
+SettingsTab:CreateButton({
+   Name = "Executor level checker",
+   Callback = function()
+   printidentity("Your executor level is")
+--It should tell you it in the console
+   end,
+})
+
 SettingsTab:CreateToggle({
         Name = "Fullbright",
         Callback = function(Value)
@@ -547,9 +562,8 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.0.3"
+    Content = "1.0.4"
 })
-
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
     if player ~= LocalPlayer then
@@ -631,7 +645,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.0.3 loaded successfully!",
+    Content = "Version 1.0.4 loaded successfully!",
     Duration = 3,
     Image = nil
 })
