@@ -247,17 +247,55 @@ local Window = Rayfield:CreateWindow({
 -- Tabs
 local VisualsTab = Window:CreateTab("Visuals", nil)
 local MovementTab = Window:CreateTab("Movement", nil)
-local DisguiseTab = Window:CreateTab("Disguise", nil)
+local OthersTab = Window:CreateTab("Others", nil)
 local SettingsTab = Window:CreateTab("Settings", nil)
 
--- Disguise Tab Features
-DisguiseTab:CreateToggle({
+-- Others Tab Features
+OthersTab:CreateToggle({
     Name = "Anti-Cheat Bypass",
     CurrentValue = bypassEnabled,
     Flag = "BypassToggle",
     Callback = function(Value)
         bypassEnabled = Value
     end
+})
+
+OthersTab:CreateButton({
+        Name = "Click TP (Tool)",
+   Callback = function()
+      local tool = Instance.new("Tool")
+      tool.Name = "Click TP"
+      tool.RequiresHandle = false
+
+      tool.Activated:Connect(function()
+         local mouse = game.Players.LocalPlayer:GetMouse()
+         if mouse.Hit then
+            game.Players.LocalPlayer.Character:MoveTo(mouse.Hit.Position)
+         end
+      end)
+
+      tool.Parent = game.Players.LocalPlayer.Backpack
+   end
+})
+
+OthersTab:CreateInput({
+        Name = "Username of Player",
+   PlaceholderText = "USERNAME",
+   RemoveTextAfterFocusLost = false,
+   Callback = function(Text)
+      _G.playerTP = Text
+   end
+})
+
+OthersTab:CreateButton({
+        Name = "Go to Player",
+   Callback = function()
+      for _,v in pairs(game.Players:GetPlayers()) do
+         if string.lower(v.Name):find(string.lower(_G.playerTP)) then
+            game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame = v.Character.HumanoidRootPart.CFrame
+         end
+      end
+   end
 })
 
 -- Visuals Tab Features
@@ -379,7 +417,11 @@ MovementTab:CreateToggle({
 
                         if State == Enum.HumanoidStateType.Jumping
                         or State == Enum.HumanoidStateType.Freefall then
-                            Root.Velocity = Vector3.new(0, JumpHeight, 0)
+                            Root.AssemblyLinearVelocity = Vector3.new(
+    Root.AssemblyLinearVelocity.X,
+    JumpHeight,
+    Root.AssemblyLinearVelocity.Z
+)
                         end
                     end
                 end
