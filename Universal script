@@ -632,7 +632,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.0.5"
+    Content = "1.0.6"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -715,7 +715,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.0.5 loaded successfully!",
+    Content = "Version 1.0.6 loaded successfully!",
     Duration = 3,
     Image = nil
 })
