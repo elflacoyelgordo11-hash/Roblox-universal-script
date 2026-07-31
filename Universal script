@@ -6,6 +6,8 @@ local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
+local VirtualUser = game:GetService("VirtualUser")
+local Lighting = game:GetService("Lighting")
 
 -- Variables
 -- UI/Cursor
@@ -33,6 +35,10 @@ local JumpHeight = 50
 local bypassEnabled = false
 local attachedToBall = false
 local ballAttachConnection = nil
+local AntiAFK = false
+local OldBrightness = Lighting.Brightness
+local OldGlobalShadows = Lighting.GlobalShadows
+local OldFogEnd = Lighting.FogEnd
 
 -- Cursor thing
 local function CreateCustomCursor()
@@ -260,6 +266,27 @@ OthersTab:CreateToggle({
     end
 })
 
+OthersTab:CreateToggle({
+    Name = "Anti AFK",
+    CurrentValue = false,
+    Flag = "AntiAFK",
+    Callback = function(Value)
+        AntiAFK = Value
+
+        if AntiAFK then
+            AntiAFKConnection = Players.LocalPlayer.Idled:Connect(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+            end)
+        else
+            if AntiAFKConnection then
+                AntiAFKConnection:Disconnect()
+                AntiAFKConnection = nil
+            end
+        end
+    end,
+})
+
 OthersTab:CreateButton({
         Name = "Click TP (Tool)",
    Callback = function()
@@ -276,6 +303,113 @@ OthersTab:CreateButton({
 
       tool.Parent = game.Players.LocalPlayer.Backpack
    end
+})
+
+OthersTab:CreateButton({
+    Name = "Copy Job ID",
+    Callback = function()
+        if setclipboard then
+            setclipboard(game.JobId)
+
+            Rayfield:Notify({
+                Title = "Copied!",
+                Content = "Job ID copied to clipboard.",
+                Duration = 3,
+            })
+        end
+    end,
+})
+
+local TargetJobId = ""
+
+OthersTab:CreateInput({
+    Name = "Job ID",
+    PlaceholderText = "Paste Job ID here...",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        TargetJobId = Text
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Join Job ID",
+    Callback = function()
+        if TargetJobId == "" then
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Please enter a Job ID first.",
+                Duration = 3
+            })
+            return
+        end
+
+        local Success, Error = pcall(function()
+            game:GetService("TeleportService"):TeleportToPlaceInstance(
+                game.PlaceId,
+                TargetJobId,
+                game.Players.LocalPlayer
+            )
+        end)
+
+        if not Success then
+            Rayfield:Notify({
+                Title = "Teleport Failed",
+                Content = tostring(Error),
+                Duration = 5
+            })
+        end
+    end,
+})
+
+OthersTab:CreateToggle({
+    Name = "FPS Booster",
+    CurrentValue = false,
+    Flag = "FPSBooster",
+    Callback = function(Value)
+        if Value then
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+
+            Lighting.GlobalShadows = false
+            Lighting.FogEnd = 9e9
+            Lighting.Brightness = 1
+
+            for _, v in ipairs(game:GetDescendants()) do
+                if v:IsA("ParticleEmitter")
+                or v:IsA("Trail")
+                or v:IsA("Smoke")
+                or v:IsA("Fire")
+                or v:IsA("Sparkles") then
+                    v.Enabled = false
+                end
+            end
+
+            Rayfield:Notify({
+                Title = "FPS Booster",
+                Content = "Enabled.",
+                Duration = 3
+            })
+        else
+            Lighting.GlobalShadows = OldGlobalShadows
+            Lighting.FogEnd = OldFogEnd
+            Lighting.Brightness = OldBrightness
+
+            for _, v in ipairs(game:GetDescendants()) do
+                if v:IsA("ParticleEmitter")
+                or v:IsA("Trail")
+                or v:IsA("Smoke")
+                or v:IsA("Fire")
+                or v:IsA("Sparkles") then
+                    v.Enabled = true
+                end
+            end
+
+            Rayfield:Notify({
+                Title = "FPS Booster",
+                Content = "Disabled.",
+                Duration = 3
+            })
+        end
+    end,
 })
 
 OthersTab:CreateInput({
@@ -468,6 +602,72 @@ MovementTab:CreateSlider({
     end,
 })
 
+MovementTab:CreateToggle({
+    Name = "Noclip",
+    CurrentValue = false,
+    Callback = function(Value)
+        if Value then
+            NoclipConnection = game:GetService("RunService").Stepped:Connect(function()
+                local Character = game.Players.LocalPlayer.Character
+                if Character then
+                    for _, part in ipairs(Character:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = false
+                        end
+                    end
+                end
+            end)
+        else
+            if NoclipConnection then
+                NoclipConnection:Disconnect()
+                NoclipConnection = nil
+
+                local Character = game.Players.LocalPlayer.Character
+                if Character then
+                    for _, part in ipairs(Character:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = true
+                        end
+                    end
+                end
+            end
+        end
+    end,
+})
+
+local SpinSpeed = 50
+local SpinConnection
+
+OthersTab:CreateToggle({
+    Name = "Spin Bot",
+    CurrentValue = false,
+    Callback = function(Value)
+        if Value then
+            SpinConnection = game:GetService("RunService").RenderStepped:Connect(function(dt)
+                local Character = game.Players.LocalPlayer.Character
+                if Character and Character:FindFirstChild("HumanoidRootPart") then
+                    Character.HumanoidRootPart.CFrame *= CFrame.Angles(0, math.rad(SpinSpeed), 0)
+                end
+            end)
+        else
+            if SpinConnection then
+                SpinConnection:Disconnect()
+                SpinConnection = nil
+            end
+        end
+    end,
+})
+
+OthersTab:CreateSlider({
+    Name = "Spin Speed",
+    Range = {1, 300},
+    Increment = 1,
+    CurrentValue = 50,
+    Callback = function(Value)
+        SpinSpeed = Value
+    end,
+})
+
 SettingsTab:CreateButton({
    Name = "Open DEX",
     Callback = function()
@@ -632,7 +832,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.0.6"
+    Content = "1.0.7"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -715,7 +915,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.0.6 loaded successfully!",
+    Content = "Version 1.0.7 loaded successfully!",
     Duration = 3,
     Image = nil
 })
