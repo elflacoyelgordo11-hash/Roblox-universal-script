@@ -1,5 +1,4 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-
 -- Services
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -8,7 +7,8 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local VirtualUser = game:GetService("VirtualUser")
 local Lighting = game:GetService("Lighting")
-
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 -- Variables
 -- UI/Cursor
 local customCursor = nil
@@ -257,6 +257,93 @@ local OthersTab = Window:CreateTab("Others", nil)
 local SettingsTab = Window:CreateTab("Settings", nil)
 
 -- Others Tab Features
+local LocalPlayer = Players.LocalPlayer
+local PlaceId = game.PlaceId
+
+local function GetServers()
+    local Servers = {}
+    local Cursor = nil
+
+    repeat
+        local URL = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100%s")
+            :format(
+                PlaceId,
+                Cursor and "&cursor=" .. Cursor or ""
+            )
+
+        local Success, Response = pcall(function()
+            return HttpService:JSONDecode(game:HttpGet(URL))
+        end)
+
+        if not Success then
+            Rayfield:Notify({
+                Title = "Server Browser",
+                Content = "Failed to fetch servers.",
+                Duration = 3
+            })
+            return nil
+        end
+
+        for _, Server in ipairs(Response.data) do
+            if Server.id ~= game.JobId and Server.playing < Server.maxPlayers then
+                table.insert(Servers, Server)
+            end
+        end
+
+        Cursor = Response.nextPageCursor
+    until not Cursor
+
+    return Servers
+end
+
+local function JoinServer(Server)
+    if Server then
+        TeleportService:TeleportToPlaceInstance(
+            PlaceId,
+            Server.id,
+            LocalPlayer
+        )
+    end
+end
+
+OthersTab:CreateButton({
+    Name = "Join Smallest Server",
+    Callback = function()
+        local Servers = GetServers()
+        if not Servers then return end
+
+        table.sort(Servers, function(a, b)
+            return a.playing < b.playing
+        end)
+
+        JoinServer(Servers[1])
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Join Largest Server",
+    Callback = function()
+        local Servers = GetServers()
+        if not Servers then return end
+
+        table.sort(Servers, function(a, b)
+            return a.playing > b.playing
+        end)
+
+        JoinServer(Servers[1])
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Join Random Server",
+    Callback = function()
+        local Servers = GetServers()
+        if Servers and #Servers > 0 then
+            JoinServer(Servers[math.random(1, #Servers)])
+        end
+    end,
+})
+
 OthersTab:CreateToggle({
     Name = "Anti-Cheat Bypass",
     CurrentValue = bypassEnabled,
@@ -303,6 +390,21 @@ OthersTab:CreateButton({
 
       tool.Parent = game.Players.LocalPlayer.Backpack
    end
+})
+
+OthersTab:CreateToggle({
+    Name = "Remove Fog",
+    CurrentValue = false,
+    Flag = "RemoveFog",
+    Callback = function(Value)
+        if Value then
+            Lighting.FogStart = 0
+            Lighting.FogEnd = 9e9
+        else
+            Lighting.FogStart = OldFogStart
+            Lighting.FogEnd = OldFogEnd
+        end
+    end,
 })
 
 OthersTab:CreateButton({
@@ -631,6 +733,16 @@ MovementTab:CreateToggle({
                     end
                 end
             end
+        end
+    end,
+})
+
+MovementTab:CreateButton({
+    Name = "Sit",
+    Callback = function()
+        local Humanoid = game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if Humanoid then
+            Humanoid.Sit = true
         end
     end,
 })
