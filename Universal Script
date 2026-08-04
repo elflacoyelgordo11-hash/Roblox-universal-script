@@ -254,6 +254,7 @@ local Window = Rayfield:CreateWindow({
 local VisualsTab = Window:CreateTab("Visuals", nil)
 local MovementTab = Window:CreateTab("Movement", nil)
 local OthersTab = Window:CreateTab("Others", nil)
+local FunTab = Window:CreateTab("Fun", nil)
 local SettingsTab = Window:CreateTab("Settings", nil)
 
 -- Others Tab Features
@@ -305,7 +306,34 @@ local function JoinServer(Server)
         )
     end
 end
+--Fun
+FunTab:CreateButton({
+   Name = "FE Invincible Fly(R15)",
+   Callback = function()
+   local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
+if isMobile then
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/396abc/Script/refs/heads/main/MobileFly.lua"))()
+else
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/396abc/Script/refs/heads/main/FlyR15.lua"))()
+end
+   end,
+})
+
+FunTab:CreateButton({
+   Name = "FE Invincible Fly(R6)",
+   Callback = function()
+  loadstring(game:HttpGet("https://pastefy.app/uRxqpwAb/raw"))()
+   end,
+})
+
+FunTab:CreateButton({
+   Name = "FE Fling Animations(R15)",
+   Callback = function()
+   loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-FE-dropkick-script-202669"))()
+   end,
+})
+--Others
 OthersTab:CreateButton({
     Name = "Join Smallest Server",
     Callback = function()
@@ -534,6 +562,39 @@ OthersTab:CreateButton({
    end
 })
 
+local SpinSpeed = 50
+local SpinConnection
+
+OthersTab:CreateToggle({
+    Name = "Spin Bot",
+    CurrentValue = false,
+    Callback = function(Value)
+        if Value then
+            SpinConnection = game:GetService("RunService").RenderStepped:Connect(function(dt)
+                local Character = game.Players.LocalPlayer.Character
+                if Character and Character:FindFirstChild("HumanoidRootPart") then
+                    Character.HumanoidRootPart.CFrame *= CFrame.Angles(0, math.rad(SpinSpeed), 0)
+                end
+            end)
+        else
+            if SpinConnection then
+                SpinConnection:Disconnect()
+                SpinConnection = nil
+            end
+        end
+    end,
+})
+
+OthersTab:CreateSlider({
+    Name = "Spin Speed",
+    Range = {1, 300},
+    Increment = 1,
+    CurrentValue = 50,
+    Callback = function(Value)
+        SpinSpeed = Value
+    end,
+})
+
 -- Visuals Tab Features
 VisualsTab:CreateToggle({
     Name = "Custom Cursor",
@@ -747,39 +808,6 @@ MovementTab:CreateButton({
     end,
 })
 
-local SpinSpeed = 50
-local SpinConnection
-
-OthersTab:CreateToggle({
-    Name = "Spin Bot",
-    CurrentValue = false,
-    Callback = function(Value)
-        if Value then
-            SpinConnection = game:GetService("RunService").RenderStepped:Connect(function(dt)
-                local Character = game.Players.LocalPlayer.Character
-                if Character and Character:FindFirstChild("HumanoidRootPart") then
-                    Character.HumanoidRootPart.CFrame *= CFrame.Angles(0, math.rad(SpinSpeed), 0)
-                end
-            end)
-        else
-            if SpinConnection then
-                SpinConnection:Disconnect()
-                SpinConnection = nil
-            end
-        end
-    end,
-})
-
-OthersTab:CreateSlider({
-    Name = "Spin Speed",
-    Range = {1, 300},
-    Increment = 1,
-    CurrentValue = 50,
-    Callback = function(Value)
-        SpinSpeed = Value
-    end,
-})
-
 SettingsTab:CreateButton({
    Name = "Open DEX",
     Callback = function()
@@ -944,7 +972,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.0.8"
+    Content = "1.0.9"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -1023,11 +1051,10 @@ for _, player in pairs(Players:GetPlayers()) do
         end
     end
 end
-
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.0.8 loaded successfully!",
+    Content = "Version 1.0.9 loaded successfully!",
     Duration = 3,
     Image = nil
 })
