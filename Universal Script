@@ -402,6 +402,30 @@ OthersTab:CreateToggle({
     end,
 })
 
+local OriginalHoldDurations = {}
+
+OthersTab:CreateToggle({
+    Name = "Instant Prompts",
+    CurrentValue = false,
+    Flag = "InstantPrompts",
+
+    Callback = function(Value)
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("ProximityPrompt") then
+                if OriginalHoldDurations[v] == nil then
+                    OriginalHoldDurations[v] = v.HoldDuration
+                end
+
+                if Value then
+                    v.HoldDuration = 0
+                else
+                    v.HoldDuration = OriginalHoldDurations[v]
+                end
+            end
+        end
+    end,
+})
+
 OthersTab:CreateButton({
         Name = "Click TP (Tool)",
    Callback = function()
@@ -829,6 +853,34 @@ game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId,game.Job
    end,
 })
 
+local Camera = workspace.CurrentCamera
+local FOV = Camera.FieldOfView
+
+SettingsTab:CreateSlider({
+    Name = "FOV",
+    Range = {40, 120},
+    Increment = 1,
+    CurrentValue = FOV,
+    Flag = "FOVSlider",
+    Callback = function(Value)
+        FOV = Value
+    end,
+})
+
+SettingsTab:CreateButton({
+    Name = "Update FOV",
+    Callback = function()
+        Camera.FieldOfView = FOV
+
+        Rayfield:Notify({
+            Title = "FOV Updated",
+            Content = "FOV set to "..FOV,
+            Duration = 2,
+            Image = 4483362458
+        })
+    end,
+})
+
 SettingsTab:CreateButton({
    Name = "UNC Test",
    Callback = function()
@@ -842,6 +894,26 @@ SettingsTab:CreateButton({
    printidentity("Your executor level is")
 --It should tell you it in the console
    end,
+})
+
+SettingsTab:CreateButton({
+   Name = "Disable Game Pause",
+   Callback = function()
+   game:GetService("GuiService"):SetGameplayPausedNotificationEnabled(false)
+   end,
+})
+
+SettingsTab:CreateToggle({
+    Name = "Disable 3D Rendering",
+    CurrentValue = false,
+    Flag = "Disable3DRendering",
+    Callback = function(Value)
+        if Value then
+            RunService:Set3dRenderingEnabled(false)
+        else
+            RunService:Set3dRenderingEnabled(true)
+        end
+    end,
 })
 
 SettingsTab:CreateToggle({
@@ -972,7 +1044,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.0.9"
+    Content = "1.1.0"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -1054,7 +1126,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.0.9 loaded successfully!",
+    Content = "Version 1.1.0 loaded successfully!",
     Duration = 3,
     Image = nil
 })
