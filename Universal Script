@@ -333,6 +333,42 @@ FunTab:CreateButton({
    loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-FE-dropkick-script-202669"))()
    end,
 })
+
+FunTab:CreateButton({
+    Name = "Jerk Tool (R6 And R15 Supported)",
+    Callback = function()
+        local Character = game.Players.LocalPlayer.Character
+        local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+        if not Humanoid then
+            Rayfield:Notify({
+                Title = "Avatar Type",
+                Content = "Character not loaded.",
+                Duration = 2
+            })
+            return
+        end
+
+        if Humanoid.RigType == Enum.HumanoidRigType.R15 then
+loadstring(game:HttpGet("https://pastefy.app/YZoglOyJ/raw"))()
+
+            Rayfield:Notify({
+                Title = "Avatar Type",
+                Content = "R15 detected!",
+                Duration = 2
+            })
+
+        elseif Humanoid.RigType == Enum.HumanoidRigType.R6 then
+loadstring(game:HttpGet("https://pastefy.app/wa3v2Vgm/raw"))()
+
+            Rayfield:Notify({
+                Title = "Avatar Type",
+                Content = "R6 detected!",
+                Duration = 2
+            })
+        end
+    end,
+})
 --Others
 OthersTab:CreateButton({
     Name = "Join Smallest Server",
@@ -408,7 +444,6 @@ OthersTab:CreateToggle({
     Name = "Instant Prompts",
     CurrentValue = false,
     Flag = "InstantPrompts",
-
     Callback = function(Value)
         for _, v in ipairs(workspace:GetDescendants()) do
             if v:IsA("ProximityPrompt") then
@@ -756,6 +791,35 @@ MovementTab:CreateToggle({
     end,
 })
 
+local Connection
+
+MovementTab:CreateToggle({
+    Name = "Auto Jump",
+    CurrentValue = false,
+    Flag = "AutoJump",
+
+    Callback = function(Value)
+        if Connection then
+            Connection:Disconnect()
+            Connection = nil
+        end
+
+        if Value then
+            Connection = RunService.Heartbeat:Connect(function()
+                local Character = Players.LocalPlayer.Character
+                if not Character then return end
+
+                local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+                if not Humanoid then return end
+
+                if Humanoid.FloorMaterial ~= Enum.Material.Air then
+                    Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+            end)
+        end
+    end,
+})
+
 MovementTab:CreateToggle({
     Name = "Jump Power",
     CurrentValue = jumpPowerEnabled,
@@ -1044,7 +1108,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.0"
+    Content = "1.1.1"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -1126,7 +1190,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.0 loaded successfully!",
+    Content = "Version 1.1.1 loaded successfully!",
     Duration = 3,
     Image = nil
 })
