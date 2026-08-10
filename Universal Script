@@ -711,6 +711,226 @@ VisualsTab:CreateSlider({
         espTransparency = Value
     end,
 })
+--// Team ESP Settings
+local espEnabled = false
+local espTransparency = 0.5
+
+local teamESPColor = Color3.fromRGB(0, 255, 0)
+local opponentESPColor = Color3.fromRGB(255, 0, 0)
+
+local espHighlights = {}
+local espUpdateConnection = nil
+
+--// Get the correct color for a player
+local function GetESPColor(player)
+    -- Same team
+    if LocalPlayer.Team and player.Team == LocalPlayer.Team then
+        return teamESPColor
+    end
+
+    -- Opposing team / no team
+    return opponentESPColor
+end
+
+local function CreateESP(player)
+    if player == LocalPlayer then
+        return
+    end
+
+    if espHighlights[player] then
+        return
+    end
+
+    local highlight = Instance.new("Highlight")
+    highlight.FillTransparency = espTransparency
+    highlight.OutlineTransparency = math.max(0, espTransparency - 0.2)
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = espEnabled
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ESPName"
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.Enabled = espEnabled
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "NameLabel"
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    nameLabel.Font = Enum.Font.SourceSansBold
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    nameLabel.TextSize = 14
+    nameLabel.Text = player.Name
+    nameLabel.Parent = billboard
+
+    local distanceLabel = Instance.new("TextLabel")
+    distanceLabel.Name = "DistanceLabel"
+    distanceLabel.BackgroundTransparency = 1
+    distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    distanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    distanceLabel.Font = Enum.Font.SourceSans
+    distanceLabel.TextStrokeTransparency = 0
+    distanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    distanceLabel.TextSize = 12
+    distanceLabel.Text = "0 studs"
+    distanceLabel.Parent = billboard
+
+    espHighlights[player] = {
+        highlight = highlight,
+        billboard = billboard,
+        nameLabel = nameLabel,
+        distanceLabel = distanceLabel
+    }
+
+    if player.Character then
+        highlight.Parent = player.Character
+
+        local head = player.Character:FindFirstChild("Head")
+        billboard.Parent = head or player.Character.PrimaryPart
+    end
+end
+
+local function UpdateESP()
+    for player, esp in pairs(espHighlights) do
+        if player.Character
+            and player.Character:FindFirstChild("HumanoidRootPart")
+            and player.Character:FindFirstChild("Humanoid")
+            and espEnabled then
+
+            local character = player.Character
+            local hrp = character.HumanoidRootPart
+
+            -- Get team/opponent color
+            local color = GetESPColor(player)
+
+            esp.highlight.FillColor = color
+            esp.highlight.OutlineColor = color
+            esp.nameLabel.TextColor3 = color
+            esp.distanceLabel.TextColor3 = color
+
+            -- Transparency
+            esp.highlight.FillTransparency = espTransparency
+            esp.highlight.OutlineTransparency =
+                math.max(0, espTransparency - 0.2)
+
+            -- Distance
+            if LocalPlayer.Character
+                and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+
+                local distance = math.floor(
+                    (LocalPlayer.Character.HumanoidRootPart.Position
+                    - hrp.Position).Magnitude
+                )
+
+                esp.distanceLabel.Text = tostring(distance) .. " studs"
+            end
+
+            -- Keep Highlight attached
+            if esp.highlight.Parent ~= character then
+                esp.highlight.Parent = character
+            end
+
+            -- Keep Billboard attached
+            local head = character:FindFirstChild("Head")
+
+            if head and esp.billboard.Parent ~= head then
+                esp.billboard.Parent = head
+            elseif esp.billboard.Parent == nil then
+                esp.billboard.Parent = character.PrimaryPart or hrp
+            end
+
+            esp.highlight.Enabled = true
+            esp.billboard.Enabled = true
+
+        else
+            if esp.highlight then
+                esp.highlight.Enabled = false
+            end
+
+            if esp.billboard then
+                esp.billboard.Enabled = false
+            end
+        end
+    end
+end
+
+local function EnableESP()
+    espEnabled = true
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and not espHighlights[player] then
+            CreateESP(player)
+        end
+    end
+
+    if not espUpdateConnection then
+        espUpdateConnection =
+            RunService.RenderStepped:Connect(UpdateESP)
+    end
+end
+
+local function DisableESP()
+    espEnabled = false
+
+    for _, esp in pairs(espHighlights) do
+        esp.highlight.Enabled = false
+        esp.billboard.Enabled = false
+    end
+
+    if espUpdateConnection then
+        espUpdateConnection:Disconnect()
+        espUpdateConnection = nil
+    end
+end
+
+VisualsTab:CreateToggle({
+    Name = "Team ESP",
+    CurrentValue = false,
+    Flag = "TeamESPToggle",
+
+    Callback = function(Value)
+        if Value then
+            EnableESP()
+        else
+            DisableESP()
+        end
+    end
+})
+
+VisualsTab:CreateColorPicker({
+    Name = "Team ESP Color",
+    Color = teamESPColor,
+    Flag = "TeamESPColor",
+
+    Callback = function(Value)
+        teamESPColor = Value
+    end
+})
+
+VisualsTab:CreateColorPicker({
+    Name = "Opponent ESP Color",
+    Color = opponentESPColor,
+    Flag = "OpponentESPColor",
+
+    Callback = function(Value)
+        opponentESPColor = Value
+    end
+})
+
+VisualsTab:CreateSlider({
+    Name = "Team ESP Transparency",
+    Range = {0, 1},
+    Increment = 0.1,
+    Suffix = "",
+    CurrentValue = espTransparency,
+    Flag = "TeamESPTransparency",
+
+    Callback = function(Value)
+        espTransparency = Value
+    end
+})
 --Movement Tabs
 MovementTab:CreateToggle({
     Name = "Speed Hack",
@@ -895,13 +1115,20 @@ MovementTab:CreateButton({
         end
     end,
 })
-
+--Settings
 SettingsTab:CreateButton({
    Name = "Open DEX",
     Callback = function()
     loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Dark-Dex-245188"))()
         end,
      })
+
+SettingsTab:CreateButton({
+   Name = "Open Cobalt (Remote Spy)",
+   Callback = function()
+   loadstring(game:HttpGet("https://github.com/notpoiu/cobalt/releases/latest/download/Cobalt.luau"))()
+   end,
+})
 
 SettingsTab:CreateButton({
    Name = "Open Simple Spy",
@@ -955,7 +1182,7 @@ SettingsTab:CreateButton({
 SettingsTab:CreateButton({
    Name = "Executor level checker",
    Callback = function()
-   printidentity("Your executor level is")
+   printidentity("Based On " .. identifyexecutor() .. ". Your executor level is")
 --It should tell you it in the console
    end,
 })
@@ -1108,7 +1335,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.1"
+    Content = "1.1.2"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -1190,7 +1417,9 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.1 loaded successfully!",
+    Content = "Version 1.1.2 loaded successfully!",
     Duration = 3,
     Image = nil
 })
+
+print("If your your having issues with MOUSED with something then it's prob your executor so use something like madium.")
