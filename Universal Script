@@ -39,6 +39,11 @@ local AntiAFK = false
 local OldBrightness = Lighting.Brightness
 local OldGlobalShadows = Lighting.GlobalShadows
 local OldFogEnd = Lighting.FogEnd
+local AntiFlingEnabled = false
+local OriginalHoldDurations = {}
+local TargetJobId = ""
+local SpinSpeed = 50
+local SpinConnection
 
 -- Cursor thing
 local function CreateCustomCursor()
@@ -308,7 +313,7 @@ local function JoinServer(Server)
 end
 --Fun
 FunTab:CreateButton({
-   Name = "FE Invincible Fly(R15)",
+   Name = "FE Invincible Fly (R15)",
    Callback = function()
    local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
@@ -321,14 +326,14 @@ end
 })
 
 FunTab:CreateButton({
-   Name = "FE Invincible Fly(R6)",
+   Name = "FE Invincible Fly (R6)",
    Callback = function()
   loadstring(game:HttpGet("https://pastefy.app/uRxqpwAb/raw"))()
    end,
 })
 
 FunTab:CreateButton({
-   Name = "FE Fling Animations(R15)",
+   Name = "FE Fling Animations (R15)",
    Callback = function()
    loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-FE-dropkick-script-202669"))()
    end,
@@ -438,7 +443,41 @@ OthersTab:CreateToggle({
     end,
 })
 
-local OriginalHoldDurations = {}
+OthersTab:CreateToggle({
+    Name = "Anti Fling",
+    CurrentValue = AntiFlingEnabled,
+    Flag = "AntiFlingToggle",
+    Callback = function(Value)
+        AntiFlingEnabled = Value
+
+        task.spawn(function()
+            while AntiFlingEnabled do
+                local Character = LocalPlayer.Character
+
+                if Character then
+                    for _, Part in ipairs(Character:GetDescendants()) do
+                        if Part:IsA("BasePart") then
+                            Part.CanCollide = false
+                        end
+                    end
+                end
+
+                task.wait(0.1)
+            end
+
+            -- Restore collision when disabled
+            local Character = LocalPlayer.Character
+
+            if Character then
+                for _, Part in ipairs(Character:GetDescendants()) do
+                    if Part:IsA("BasePart") then
+                        Part.CanCollide = true
+                    end
+                end
+            end
+        end)
+    end
+})
 
 OthersTab:CreateToggle({
     Name = "Instant Prompts",
@@ -508,8 +547,6 @@ OthersTab:CreateButton({
         end
     end,
 })
-
-local TargetJobId = ""
 
 OthersTab:CreateInput({
     Name = "Job ID",
@@ -620,9 +657,6 @@ OthersTab:CreateButton({
       end
    end
 })
-
-local SpinSpeed = 50
-local SpinConnection
 
 OthersTab:CreateToggle({
     Name = "Spin Bot",
@@ -950,9 +984,40 @@ MovementTab:CreateToggle({
     end
 })
 
+MovementTab:CreateToggle({
+    Name = "Speed Hack (Loop)",
+    CurrentValue = loopSpeedEnabled,
+    Flag = "LoopSpeedToggle",
+    Callback = function(Value)
+        loopSpeedEnabled = Value
+
+        if Value then
+            task.spawn(function()
+                while loopSpeedEnabled do
+                    local Character = LocalPlayer.Character
+                    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+                    if Humanoid then
+                        Humanoid.WalkSpeed = currentWalkSpeed
+                    end
+
+                    task.wait(0.1)
+                end
+            end)
+        else
+            local Character = LocalPlayer.Character
+            local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+            if Humanoid then
+                Humanoid.WalkSpeed = defaultWalkSpeed
+            end
+        end
+    end
+})
+
 MovementTab:CreateSlider({
     Name = "Walk Speed",
-    Range = {16, 500},
+    Range = {1, 500},
     Increment = 1,
     Suffix = "",
     CurrentValue = currentWalkSpeed,
@@ -1058,9 +1123,40 @@ MovementTab:CreateToggle({
     end
 })
 
+MovementTab:CreateToggle({
+    Name = "Jump Power (Loop)",
+    CurrentValue = loopJumpPowerEnabled,
+    Flag = "LoopJumpToggle",
+    Callback = function(Value)
+        loopJumpPowerEnabled = Value
+
+        if Value then
+            task.spawn(function()
+                while loopJumpPowerEnabled do
+                    local Character = LocalPlayer.Character
+                    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+                    if Humanoid then
+                        Humanoid.JumpPower = currentJumpPower
+                    end
+
+                    task.wait(0.1)
+                end
+            end)
+        else
+            local Character = LocalPlayer.Character
+            local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+            if Humanoid then
+                Humanoid.JumpPower = defaultJumpPower
+            end
+        end
+    end
+})
+
 MovementTab:CreateSlider({
     Name = "Jump Height",
-    Range = {50, 500},
+    Range = {1, 500},
     Increment = 1,
     Suffix = "",
     CurrentValue = currentJumpPower,
@@ -1122,13 +1218,6 @@ SettingsTab:CreateButton({
     loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Dark-Dex-245188"))()
         end,
      })
-
-SettingsTab:CreateButton({
-   Name = "Open Cobalt (Remote Spy)",
-   Callback = function()
-   loadstring(game:HttpGet("https://github.com/notpoiu/cobalt/releases/latest/download/Cobalt.luau"))()
-   end,
-})
 
 SettingsTab:CreateButton({
    Name = "Open Simple Spy",
@@ -1335,7 +1424,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.2"
+    Content = "1.1.3"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -1417,7 +1506,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.2 loaded successfully!",
+    Content = "Version 1.1.3 loaded successfully!",
     Duration = 3,
     Image = nil
 })
