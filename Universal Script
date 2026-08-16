@@ -9,6 +9,7 @@ local VirtualUser = game:GetService("VirtualUser")
 local Lighting = game:GetService("Lighting")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
+local Camera = workspace.CurrentCamera
 -- Variables
 -- UI/Cursor
 local customCursor = nil
@@ -44,7 +45,13 @@ local OriginalHoldDurations = {}
 local TargetJobId = ""
 local SpinSpeed = 50
 local SpinConnection
-
+local Radius = 150
+local ShowRadius = false
+local AimbotEnabled = false
+local WallCheck = true
+local Smoothness = 0.15
+local AimMethod = "Mouse"
+local TeamCheck = true
 -- Cursor thing
 local function CreateCustomCursor()
     local cursor = Drawing.new("Circle")
@@ -242,7 +249,6 @@ local function DisableESP()
         espUpdateConnection = nil
     end
 end
-
 -- Setting up the UI
 local Window = Rayfield:CreateWindow({
     Name = "MOUSED universal hub",
@@ -444,42 +450,6 @@ OthersTab:CreateToggle({
 })
 
 OthersTab:CreateToggle({
-    Name = "Anti Fling",
-    CurrentValue = AntiFlingEnabled,
-    Flag = "AntiFlingToggle",
-    Callback = function(Value)
-        AntiFlingEnabled = Value
-
-        task.spawn(function()
-            while AntiFlingEnabled do
-                local Character = LocalPlayer.Character
-
-                if Character then
-                    for _, Part in ipairs(Character:GetDescendants()) do
-                        if Part:IsA("BasePart") then
-                            Part.CanCollide = false
-                        end
-                    end
-                end
-
-                task.wait(0.1)
-            end
-
-            -- Restore collision when disabled
-            local Character = LocalPlayer.Character
-
-            if Character then
-                for _, Part in ipairs(Character:GetDescendants()) do
-                    if Part:IsA("BasePart") then
-                        Part.CanCollide = true
-                    end
-                end
-            end
-        end)
-    end
-})
-
-OthersTab:CreateToggle({
     Name = "Instant Prompts",
     CurrentValue = false,
     Flag = "InstantPrompts",
@@ -656,6 +626,18 @@ OthersTab:CreateButton({
          end
       end
    end
+})
+
+OthersTab:CreateButton({
+    Name = "Reset Character",
+    Callback = function()
+        local Character = game.Players.LocalPlayer.Character
+        local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+        if Humanoid then
+            Humanoid.Health = 0
+        end
+    end,
 })
 
 OthersTab:CreateToggle({
@@ -965,6 +947,187 @@ VisualsTab:CreateSlider({
         espTransparency = Value
     end
 })
+-- FOV Circle
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = false
+FOVCircle.Radius = Radius
+FOVCircle.Thickness = 2
+FOVCircle.Filled = false
+FOVCircle.Transparency = 1
+
+local function IsVisible(Character)
+    if not WallCheck then
+        return true
+    end
+
+    local Root = Character:FindFirstChild("HumanoidRootPart")
+    if not Root then
+        return false
+    end
+
+    local Origin = Camera.CFrame.Position
+    local Direction = Root.Position - Origin
+
+    local Params = RaycastParams.new()
+    Params.FilterType = Enum.RaycastFilterType.Exclude
+    Params.FilterDescendantsInstances = {
+        LocalPlayer.Character
+    }
+
+    local Result = workspace:Raycast(Origin, Direction, Params)
+
+    return Result and Result.Instance:IsDescendantOf(Character)
+end
+
+local function GetClosestTarget()
+    local MousePosition = UserInputService:GetMouseLocation()
+    local Closest = nil
+    local ClosestDistance = Radius
+
+    for _, Player in ipairs(Players:GetPlayers()) do
+        if Player ~= LocalPlayer and Player.Character then
+            local Character = Player.Character
+            local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+            local Root = Character:FindFirstChild("HumanoidRootPart")
+
+            if Humanoid and Root and Humanoid.Health > 0 then
+                local ScreenPosition, OnScreen =
+                    Camera:WorldToViewportPoint(Root.Position)
+
+                if OnScreen then
+                    local Distance = (
+                        Vector2.new(ScreenPosition.X, ScreenPosition.Y)
+                        - MousePosition
+                    ).Magnitude
+
+                    if Distance <= ClosestDistance and IsVisible(Character) then
+                        ClosestDistance = Distance
+                        Closest = Root
+                    end
+                end
+            end
+        end
+    end
+
+    return Closest
+end
+local function GetAimPosition()
+    if AimMethod == "Middle of screen" then
+        local ViewportSize = Camera.ViewportSize
+        return Vector2.new(
+            ViewportSize.X / 2,
+            ViewportSize.Y / 2
+        )
+    else
+        return UserInputService:GetMouseLocation()
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    local AimPosition = GetAimPosition()
+
+    FOVCircle.Position = AimPosition
+    FOVCircle.Radius = Radius
+    FOVCircle.Visible = AimbotEnabled
+
+    if not AimbotEnabled then
+        return
+    end
+
+    local Target = GetClosestTarget()
+
+    if Target then
+        local TargetCFrame = CFrame.lookAt(
+            Camera.CFrame.Position,
+            Target.Position
+        )
+
+        Camera.CFrame = Camera.CFrame:Lerp(
+            TargetCFrame,
+            Smoothness
+        )
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    local MousePosition = UserInputService:GetMouseLocation()
+
+    -- Keep circle exactly centered on mouse
+    FOVCircle.Position = MousePosition
+    FOVCircle.Radius = Radius
+    FOVCircle.Visible = AimbotEnabled
+
+    if not AimbotEnabled then
+        return
+    end
+
+    local Target = GetClosestTarget()
+
+    if Target then
+        local TargetCFrame = CFrame.lookAt(
+            Camera.CFrame.Position,
+            Target.Position
+        )
+
+        Camera.CFrame = Camera.CFrame:Lerp(
+            TargetCFrame,
+            Smoothness
+        )
+    end
+end)
+-- Aimbot ON/OFF
+VisualsTab:CreateToggle({
+    Name = "Aimbot",
+    CurrentValue = false,
+    Flag = "Aimbot",
+    Callback = function(Value)
+        AimbotEnabled = Value
+    end
+})
+
+VisualsTab:CreateToggle({
+    Name = "Wall Check",
+    CurrentValue = true,
+    Flag = "WallCheck",
+    Callback = function(Value)
+        WallCheck = Value
+    end
+})
+
+VisualsTab:CreateSlider({
+    Name = "Aim Radius",
+    Range = {50, 500},
+    Increment = 10,
+    Suffix = " px",
+    CurrentValue = 150,
+    Flag = "AimRadius",
+    Callback = function(Value)
+        Radius = Value
+    end
+})
+
+VisualsTab:CreateDropdown({
+    Name = "Aim Method",
+    Options = {"Mouse", "Middle of screen"},
+    CurrentOption = {"Mouse"},
+    MultipleOptions = false,
+    Flag = "AimMethod",
+    Callback = function(Option)
+        AimMethod = Option[1]
+    end
+})
+
+VisualsTab:CreateSlider({
+    Name = "Drirft Dead Zone",
+    Range = {1, 100},
+    Increment = 1,
+    Suffix = "%",
+    CurrentValue = 15,
+    Flag = "AimSmoothness",
+    Callback = function(Value)
+        Smoothness = Value / 100
+    end
+})
 --Movement Tabs
 MovementTab:CreateToggle({
     Name = "Speed Hack",
@@ -1001,7 +1164,7 @@ MovementTab:CreateToggle({
                         Humanoid.WalkSpeed = currentWalkSpeed
                     end
 
-                    task.wait(0.1)
+                    task.wait(0.01)
                 end
             end)
         else
@@ -1140,7 +1303,7 @@ MovementTab:CreateToggle({
                         Humanoid.JumpPower = currentJumpPower
                     end
 
-                    task.wait(0.1)
+                    task.wait(0.01)
                 end
             end)
         else
@@ -1424,7 +1587,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.3"
+    Content = "1.1.4"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -1506,7 +1669,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.3 loaded successfully!",
+    Content = "Version 1.1.4 loaded successfully!",
     Duration = 3,
     Image = nil
 })
