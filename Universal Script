@@ -49,9 +49,11 @@ local Radius = 150
 local ShowRadius = false
 local AimbotEnabled = false
 local WallCheck = true
-local Smoothness = 0.15
+local Smoothness = 0.85
 local AimMethod = "Mouse"
 local TeamCheck = true
+local XRayEnabled = false
+local OriginalTransparency = {}
 -- Cursor thing
 local function CreateCustomCursor()
     local cursor = Drawing.new("Circle")
@@ -557,6 +559,76 @@ OthersTab:CreateButton({
     end,
 })
 
+OthersTab:CreateButton({
+    Name = "Copy Place ID",
+    Callback = function()
+        if setclipboard then
+            setclipboard(tostring(game.PlaceId))
+
+            Rayfield:Notify({
+                Title = "Place ID Copied",
+                Content = tostring(game.PlaceId),
+                Duration = 2
+            })
+        end
+    end,
+})
+
+OthersTab:CreateInput({
+    Name = "Place ID",
+    PlaceholderText = "Enter Place ID...",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Value)
+        local PlaceId = tonumber(Value)
+
+        if not PlaceId then
+            Rayfield:Notify({
+                Title = "Invalid Place ID",
+                Content = "Please enter a valid numeric Place ID.",
+                Duration = 2
+            })
+            return
+        end
+
+        TeleportService:Teleport(PlaceId, Players.LocalPlayer)
+    end,
+})
+
+local function IsPlayerCharacter(Object)
+    local Model = Object:FindFirstAncestorOfClass("Model")
+    return Model and Players:GetPlayerFromCharacter(Model) ~= nil
+end
+
+OthersTab:CreateToggle({
+    Name = "X-Ray",
+    CurrentValue = false,
+    Flag = "XRay",
+
+    Callback = function(Value)
+        XRayEnabled = Value
+
+        if Value then
+            for _, Object in ipairs(workspace:GetDescendants()) do
+                if Object:IsA("BasePart") and not IsPlayerCharacter(Object) then
+                    if OriginalTransparency[Object] == nil then
+                        OriginalTransparency[Object] = Object.Transparency
+                    end
+
+                    Object.Transparency = math.max(Object.Transparency, 0.7)
+                end
+            end
+        else
+            for Object, Transparency in pairs(OriginalTransparency) do
+                if Object and Object.Parent then
+                    Object.Transparency = Transparency
+                end
+            end
+
+            table.clear(OriginalTransparency)
+        end
+    end,
+})
+
 OthersTab:CreateToggle({
     Name = "FPS Booster",
     CurrentValue = false,
@@ -970,47 +1042,13 @@ local function IsVisible(Character)
 
     local Params = RaycastParams.new()
     Params.FilterType = Enum.RaycastFilterType.Exclude
-    Params.FilterDescendantsInstances = {
-        LocalPlayer.Character
-    }
+    Params.FilterDescendantsInstances = {LocalPlayer.Character}
 
-    local Result = workspace:Raycast(Origin, Direction, Params)
+    local Result = Workspace:Raycast(Origin, Direction, Params)
 
     return Result and Result.Instance:IsDescendantOf(Character)
 end
 
-local function GetClosestTarget()
-    local MousePosition = UserInputService:GetMouseLocation()
-    local Closest = nil
-    local ClosestDistance = Radius
-
-    for _, Player in ipairs(Players:GetPlayers()) do
-        if Player ~= LocalPlayer and Player.Character then
-            local Character = Player.Character
-            local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-            local Root = Character:FindFirstChild("HumanoidRootPart")
-
-            if Humanoid and Root and Humanoid.Health > 0 then
-                local ScreenPosition, OnScreen =
-                    Camera:WorldToViewportPoint(Root.Position)
-
-                if OnScreen then
-                    local Distance = (
-                        Vector2.new(ScreenPosition.X, ScreenPosition.Y)
-                        - MousePosition
-                    ).Magnitude
-
-                    if Distance <= ClosestDistance and IsVisible(Character) then
-                        ClosestDistance = Distance
-                        Closest = Root
-                    end
-                end
-            end
-        end
-    end
-
-    return Closest
-end
 local function GetAimPosition()
     if AimMethod == "Middle of screen" then
         local ViewportSize = Camera.ViewportSize
@@ -1018,11 +1056,52 @@ local function GetAimPosition()
             ViewportSize.X / 2,
             ViewportSize.Y / 2
         )
-    else
-        return UserInputService:GetMouseLocation()
     end
+
+    return UserInputService:GetMouseLocation()
 end
 
+local function GetClosestTarget()
+    local AimPosition = GetAimPosition()
+    local ClosestTarget = nil
+    local ClosestDistance = Radius
+
+    for _, Player in ipairs(Players:GetPlayers()) do
+        if Player ~= LocalPlayer and Player.Character then
+
+            -- Simple team check
+            if not TeamCheck or Player.Team ~= LocalPlayer.Team then
+
+                local Character = Player.Character
+                local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+                local Root = Character:FindFirstChild("HumanoidRootPart")
+
+                if Humanoid and Root and Humanoid.Health > 0 then
+                    local ScreenPosition, OnScreen =
+                        Camera:WorldToViewportPoint(Root.Position)
+
+                    if OnScreen then
+                        local Distance = (
+                            Vector2.new(ScreenPosition.X, ScreenPosition.Y)
+                            - AimPosition
+                        ).Magnitude
+
+                        if Distance <= ClosestDistance then
+                            if IsVisible(Character) then
+                                ClosestDistance = Distance
+                                ClosestTarget = Root
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return ClosestTarget
+end
+
+-- ONE aimbot loop only
 RunService.RenderStepped:Connect(function()
     local AimPosition = GetAimPosition()
 
@@ -1036,34 +1115,37 @@ RunService.RenderStepped:Connect(function()
 
     local Target = GetClosestTarget()
 
-    if Target then
-        local TargetCFrame = CFrame.lookAt(
-            Camera.CFrame.Position,
-            Target.Position
-        )
-
-        Camera.CFrame = Camera.CFrame:Lerp(
-            TargetCFrame,
-            Smoothness
-        )
-    end
-end)
-
-RunService.RenderStepped:Connect(function()
-    local MousePosition = UserInputService:GetMouseLocation()
-
-    -- Keep circle exactly centered on mouse
-    FOVCircle.Position = MousePosition
-    FOVCircle.Radius = Radius
-    FOVCircle.Visible = AimbotEnabled
-
-    if not AimbotEnabled then
+    if not Target then
         return
     end
 
-    local Target = GetClosestTarget()
+    local ScreenPosition, OnScreen =
+        Camera:WorldToViewportPoint(Target.Position)
 
-    if Target then
+    if not OnScreen then
+        return
+    end
+
+    -- Higher Smoothness = slower/smoother movement
+    local AimAmount = 1 - Smoothness
+
+    if AimMethod == "Mouse" then
+        if mousemoverel then
+            local MousePosition = UserInputService:GetMouseLocation()
+
+            local TargetPosition = Vector2.new(
+                ScreenPosition.X,
+                ScreenPosition.Y
+            )
+
+            local Difference = TargetPosition - MousePosition
+
+            mousemoverel(
+                Difference.X * AimAmount,
+                Difference.Y * AimAmount
+            )
+        end
+    else
         local TargetCFrame = CFrame.lookAt(
             Camera.CFrame.Position,
             Target.Position
@@ -1071,11 +1153,11 @@ RunService.RenderStepped:Connect(function()
 
         Camera.CFrame = Camera.CFrame:Lerp(
             TargetCFrame,
-            Smoothness
+            AimAmount
         )
     end
 end)
--- Aimbot ON/OFF
+
 VisualsTab:CreateToggle({
     Name = "Aimbot",
     CurrentValue = false,
@@ -1086,8 +1168,17 @@ VisualsTab:CreateToggle({
 })
 
 VisualsTab:CreateToggle({
+    Name = "Team Check",
+    CurrentValue = TeamCheck,
+    Flag = "AimbotTeamCheck",
+    Callback = function(Value)
+        TeamCheck = Value
+    end
+})
+
+VisualsTab:CreateToggle({
     Name = "Wall Check",
-    CurrentValue = true,
+    CurrentValue = WallCheck,
     Flag = "WallCheck",
     Callback = function(Value)
         WallCheck = Value
@@ -1097,9 +1188,9 @@ VisualsTab:CreateToggle({
 VisualsTab:CreateSlider({
     Name = "Aim Radius",
     Range = {50, 500},
-    Increment = 10,
+    Increment = 1,
     Suffix = " px",
-    CurrentValue = 150,
+    CurrentValue = Radius,
     Flag = "AimRadius",
     Callback = function(Value)
         Radius = Value
@@ -1118,11 +1209,11 @@ VisualsTab:CreateDropdown({
 })
 
 VisualsTab:CreateSlider({
-    Name = "Drirft Dead Zone",
+    Name = "Aim Smoothness",
     Range = {1, 100},
     Increment = 1,
     Suffix = "%",
-    CurrentValue = 15,
+    CurrentValue = 85,
     Flag = "AimSmoothness",
     Callback = function(Value)
         Smoothness = Value / 100
@@ -1587,7 +1678,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.4"
+    Content = "1.1.5"
 })
 -- Set up event handlers
 Players.PlayerAdded:Connect(function(player)
@@ -1669,7 +1760,7 @@ end
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.4 loaded successfully!",
+    Content = "Version 1.1.5 loaded successfully!",
     Duration = 3,
     Image = nil
 })
