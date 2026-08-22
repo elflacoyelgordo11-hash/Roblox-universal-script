@@ -10,28 +10,36 @@ local Lighting = game:GetService("Lighting")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local Camera = workspace.CurrentCamera
+local TweenService = game:GetService("TweenService")
+local PathfindingService = game:GetService("PathfindingService")
 -- Variables
 -- UI/Cursor
 local customCursor = nil
 -- ESP
-local espEnabled = false
-local espColor = Color3.fromRGB(255, 0, 0)
-local selectedEspColor = Color3.fromRGB(255, 0, 0)
-local espObjects = {}
-local rainbowESP = false
-local espTransparency = 0.5
-local rainbowConnection = nil
-local espHighlights = {}
+local ESPEnabled = false
+local ESPColor = Color3.fromRGB(255, 0, 0)
+local ESPTransparency = 0.5
+local RainbowESP = false
+local ESPObjects = {}
+local ESPUpdateConnection = nil
+local TeamESPEnabled = false
+local TeamESPTransparency = 0.5
+local TeamESPColor = Color3.fromRGB(0, 255, 0)
+local OpponentESPColor = Color3.fromRGB(255, 0, 0)
+local TeamESPObjects = {}
+local TeamESPUpdateConnection = nil
 -- Movement
-local defaultWalkSpeed = 16
-local defaultJumpPower = 50
-local walkSpeedEnabled = false
-local jumpPowerEnabled = false
-local currentWalkSpeed = defaultWalkSpeed
-local currentJumpPower = defaultJumpPower
+local CurrentSpeed = 16
+local CurrentJump = 50
+local SpeedEnabled = false
+local JumpEnabled = false
+local currentWalkSpeed = 16
+local currentJumpPower = 50
 local InfiniteJump = false
 local JumpConnection
 local JumpHeight = 50
+local SpeedLoop = false
+local JumpLoop = false
 -- Game stuff
 local bypassEnabled = false
 local attachedToBall = false
@@ -54,6 +62,20 @@ local AimMethod = "Mouse"
 local TeamCheck = true
 local XRayEnabled = false
 local OriginalTransparency = {}
+local SelectedPlayer = nil
+local TweenSpeed = 50
+local FollowEnabled = false
+local FollowConnection
+local FollowPath = nil
+local FollowWaypoints = {}
+local FollowWaypointIndex = 1
+local FollowTargetPosition = nil
+local FollowPathBlockedConnection = nil
+local FollowLastRepath = 0
+local PlayerDropdown
+local AimPart = "Head"
+local InstantPromptsEnabled = false
+local PromptAddedConnection
 -- Cursor thing
 local function CreateCustomCursor()
     local cursor = Drawing.new("Circle")
@@ -63,13 +85,11 @@ local function CreateCustomCursor()
     cursor.Transparency = 1
     cursor.ZIndex = 999
     cursor.Visible = true
-    
     -- Update cursor position
     local connection = RunService.RenderStepped:Connect(function()
         local mousePos = UserInputService:GetMouseLocation()
         cursor.Position = Vector2.new(mousePos.X, mousePos.Y)
     end)
-    
     -- Hide the default Roblox cursor
     UserInputService.MouseIconEnabled = false
     
@@ -96,160 +116,277 @@ local function DisableCustomCursor()
         customCursor = nil
     end
 end
-
 -- ESP Functions
-local function CreateESP(player)
-    if player == LocalPlayer then return end
-    
-    local highlight = Instance.new("Highlight")
-    highlight.FillColor = espColor
-    highlight.OutlineColor = espColor
-    highlight.FillTransparency = espTransparency
-    highlight.OutlineTransparency = espTransparency - 0.2
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Enabled = espEnabled
-    
-    -- Add name billboard
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "ESPName"
-    billboard.AlwaysOnTop = true
-    billboard.Size = UDim2.new(0, 200, 0, 50)
-    billboard.StudsOffset = Vector3.new(0, 3, 0)
-    billboard.Enabled = espEnabled
-    
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Name = "NameLabel"
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    nameLabel.Font = Enum.Font.SourceSansBold
-    nameLabel.TextColor3 = espColor
-    nameLabel.TextStrokeTransparency = 0
-    nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    nameLabel.TextSize = 14
-    nameLabel.Text = player.Name
-    nameLabel.Parent = billboard
-    
-    local distanceLabel = Instance.new("TextLabel")
-    distanceLabel.Name = "DistanceLabel"
-    distanceLabel.BackgroundTransparency = 1
-    distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
-    distanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    distanceLabel.Font = Enum.Font.SourceSans
-    distanceLabel.TextColor3 = espColor
-    distanceLabel.TextStrokeTransparency = 0
-    distanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    distanceLabel.TextSize = 12
-    distanceLabel.Text = "0 studs"
-    distanceLabel.Parent = billboard
-    
-    espHighlights[player] = {
-        highlight = highlight,
-        billboard = billboard,
-        nameLabel = nameLabel,
-        distanceLabel = distanceLabel
+
+local function CreateESP(Player, ObjectTable, Prefix)
+    if Player == LocalPlayer or ObjectTable[Player] then
+        return
+    end
+
+    local Highlight = Instance.new("Highlight")
+    Highlight.Name = Prefix .. "_ESP"
+    Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    Highlight.Enabled = false
+    Highlight.FillTransparency = 0.5
+    Highlight.OutlineTransparency = 0.3
+
+    local Billboard = Instance.new("BillboardGui")
+    Billboard.Name = Prefix .. "_ESPName"
+    Billboard.AlwaysOnTop = true
+    Billboard.Size = UDim2.new(0, 200, 0, 50)
+    Billboard.StudsOffset = Vector3.new(0, 3, 0)
+    Billboard.Enabled = false
+
+    local NameLabel = Instance.new("TextLabel")
+    NameLabel.BackgroundTransparency = 1
+    NameLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    NameLabel.Font = Enum.Font.SourceSansBold
+    NameLabel.TextSize = 14
+    NameLabel.Text = Player.Name
+    NameLabel.TextStrokeTransparency = 0
+    NameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    NameLabel.Parent = Billboard
+
+    local DistanceLabel = Instance.new("TextLabel")
+    DistanceLabel.BackgroundTransparency = 1
+    DistanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
+    DistanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    DistanceLabel.Font = Enum.Font.SourceSans
+    DistanceLabel.TextSize = 12
+    DistanceLabel.Text = "0 studs"
+    DistanceLabel.TextStrokeTransparency = 0
+    DistanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    DistanceLabel.Parent = Billboard
+
+    ObjectTable[Player] = {
+        Highlight = Highlight,
+        Billboard = Billboard,
+        NameLabel = NameLabel,
+        DistanceLabel = DistanceLabel
     }
-    
-    -- Apply to current character if it exists
-    if player.Character then
-        highlight.Parent = player.Character
-        billboard.Parent = player.Character:FindFirstChild("Head") or player.Character.PrimaryPart
+end
+
+local function AttachESP(Player, ESP)
+    local Character = Player.Character
+
+    if not Character then
+        return
+    end
+
+    ESP.Highlight.Parent = Character
+
+    local Head = Character:FindFirstChild("Head")
+
+    if Head then
+        ESP.Billboard.Parent = Head
     end
 end
 
-local function UpdateESP()
-    for player, esp in pairs(espHighlights) do
-        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Humanoid") and espEnabled then
-            local hrp = player.Character.HumanoidRootPart
-            
-            -- Update ESP color (for rainbow effect)
-            if rainbowESP then
-                local hue = (tick() % 5) / 5
-                local color = Color3.fromHSV(hue, 1, 1)
-                esp.highlight.FillColor = color
-                esp.highlight.OutlineColor = color
-                esp.nameLabel.TextColor3 = color
-                esp.distanceLabel.TextColor3 = color
-            else
-                esp.highlight.FillColor = espColor
-                esp.highlight.OutlineColor = espColor
-                esp.nameLabel.TextColor3 = espColor
-                esp.distanceLabel.TextColor3 = espColor
-            end
-            
-            -- Update transparency
-            esp.highlight.FillTransparency = espTransparency
-            esp.highlight.OutlineTransparency = math.max(0, espTransparency - 0.2)
-            
-            -- Update distance
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                local distance = math.floor((LocalPlayer.Character.HumanoidRootPart.Position - hrp.Position).Magnitude)
-                esp.distanceLabel.Text = tostring(distance) .. " studs"
-            end
-            
-            -- Make sure highlight is parented to character
-            if esp.highlight.Parent ~= player.Character then
-                esp.highlight.Parent = player.Character
-            end
-            
-            -- Make sure billboard is parented to head or primary part
-            local head = player.Character:FindFirstChild("Head")
-            if head and esp.billboard.Parent ~= head then
-                esp.billboard.Parent = head
-            elseif esp.billboard.Parent == nil then
-                esp.billboard.Parent = player.Character.PrimaryPart or hrp
-            end
-            
-            -- Enable ESP elements
-            esp.highlight.Enabled = true
-            esp.billboard.Enabled = true
+local function UpdateESPObject(Player, ESP, Enabled, Color, Transparency)
+    local Character = Player.Character
+    local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+    if not Enabled or not Character or not Root or not Humanoid or Humanoid.Health <= 0 then
+        ESP.Highlight.Enabled = false
+        ESP.Billboard.Enabled = false
+        return
+    end
+
+    local FinalColor = Color
+
+    if Player == LocalPlayer then
+        return
+    end
+
+    ESP.Highlight.FillColor = FinalColor
+    ESP.Highlight.OutlineColor = FinalColor
+    ESP.Highlight.FillTransparency = Transparency
+    ESP.Highlight.OutlineTransparency = math.max(0, Transparency - 0.2)
+
+    ESP.NameLabel.TextColor3 = FinalColor
+    ESP.DistanceLabel.TextColor3 = FinalColor
+
+    local MyCharacter = LocalPlayer.Character
+    local MyRoot = MyCharacter and MyCharacter:FindFirstChild("HumanoidRootPart")
+
+    if MyRoot then
+        local Distance = math.floor(
+            (MyRoot.Position - Root.Position).Magnitude
+        )
+
+        ESP.DistanceLabel.Text = tostring(Distance) .. " studs"
+    end
+
+    if ESP.Highlight.Parent ~= Character then
+        ESP.Highlight.Parent = Character
+    end
+
+    local Head = Character:FindFirstChild("Head")
+
+    if Head and ESP.Billboard.Parent ~= Head then
+        ESP.Billboard.Parent = Head
+    end
+
+    ESP.Highlight.Enabled = true
+    ESP.Billboard.Enabled = true
+end
+
+local function SetupESPPlayer(Player)
+    if Player == LocalPlayer then
+        return
+    end
+
+    CreateESP(Player, ESPObjects, "MOUSED")
+    CreateESP(Player, TeamESPObjects, "MOUSED_Team")
+
+    Player.CharacterAdded:Connect(function(Character)
+        task.wait(0.2)
+
+        local Normal = ESPObjects[Player]
+        local Team = TeamESPObjects[Player]
+
+        if Normal then
+            AttachESP(Player, Normal)
+        end
+
+        if Team then
+            AttachESP(Player, Team)
+        end
+    end)
+end
+
+local function UpdateNormalESP()
+    for Player, ESP in pairs(ESPObjects) do
+        local Color = ESPColor
+
+        if RainbowESP then
+            Color = Color3.fromHSV((tick() % 5) / 5, 1, 1)
+        end
+
+        UpdateESPObject(
+            Player,
+            ESP,
+            ESPEnabled,
+            Color,
+            ESPTransparency
+        )
+    end
+end
+
+local function UpdateTeamESP()
+    for Player, ESP in pairs(TeamESPObjects) do
+        local Color
+
+        if LocalPlayer.Team and Player.Team == LocalPlayer.Team then
+            Color = TeamESPColor
         else
-            -- Disable ESP elements if character doesn't exist
-            if esp.highlight then
-                esp.highlight.Enabled = false
-            end
-            if esp.billboard then
-                esp.billboard.Enabled = false
-            end
+            Color = OpponentESPColor
         end
+
+        UpdateESPObject(
+            Player,
+            ESP,
+            TeamESPEnabled,
+            Color,
+            TeamESPTransparency
+        )
     end
 end
 
-local function EnableESP()
-    espEnabled = true
-    
-    -- Create ESP for existing players
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and not espHighlights[player] then
-            CreateESP(player)
-        end
-    end
-    
-    -- Connect update function
-    if not espUpdateConnection then
-        espUpdateConnection = RunService.RenderStepped:Connect(UpdateESP)
-    end
-    
-    -- Enable all existing highlights
-    for _, esp in pairs(espHighlights) do
-        esp.highlight.Enabled = true
-        esp.billboard.Enabled = true
+local function EnableNormalESP()
+    ESPEnabled = true
+
+    if not ESPUpdateConnection then
+        ESPUpdateConnection = RunService.RenderStepped:Connect(UpdateNormalESP)
     end
 end
 
-local function DisableESP()
-    espEnabled = false
-    
-    -- Disable all highlights
-    for _, esp in pairs(espHighlights) do
-        esp.highlight.Enabled = false
-        esp.billboard.Enabled = false
+local function DisableNormalESP()
+    ESPEnabled = false
+
+    if ESPUpdateConnection then
+        ESPUpdateConnection:Disconnect()
+        ESPUpdateConnection = nil
     end
-    
-    -- Disconnect update function
-    if espUpdateConnection then
-        espUpdateConnection:Disconnect()
-        espUpdateConnection = nil
+
+    for _, ESP in pairs(ESPObjects) do
+        ESP.Highlight.Enabled = false
+        ESP.Billboard.Enabled = false
     end
+end
+
+local function EnableTeamESP()
+    TeamESPEnabled = true
+
+    if not TeamESPUpdateConnection then
+        TeamESPUpdateConnection = RunService.RenderStepped:Connect(UpdateTeamESP)
+    end
+end
+
+local function DisableTeamESP()
+    TeamESPEnabled = false
+
+    if TeamESPUpdateConnection then
+        TeamESPUpdateConnection:Disconnect()
+        TeamESPUpdateConnection = nil
+    end
+
+    for _, ESP in pairs(TeamESPObjects) do
+        ESP.Highlight.Enabled = false
+        ESP.Billboard.Enabled = false
+    end
+end
+
+Players.PlayerAdded:Connect(function(Player)
+    SetupESPPlayer(Player)
+end)
+
+Players.PlayerRemoving:Connect(function(Player)
+    local Normal = ESPObjects[Player]
+
+    if Normal then
+        Normal.Highlight:Destroy()
+        Normal.Billboard:Destroy()
+        ESPObjects[Player] = nil
+    end
+
+    local Team = TeamESPObjects[Player]
+
+    if Team then
+        Team.Highlight:Destroy()
+        Team.Billboard:Destroy()
+        TeamESPObjects[Player] = nil
+    end
+end)
+
+for _, Player in ipairs(Players:GetPlayers()) do
+    SetupESPPlayer(Player)
+end
+
+
+Players.PlayerRemoving:Connect(function(Player)
+
+    local Normal = ESPObjects[Player]
+
+    if Normal then
+        Normal.Highlight:Destroy()
+        Normal.Billboard:Destroy()
+        ESPObjects[Player] = nil
+    end
+
+    local Team = TeamESPObjects[Player]
+
+    if Team then
+        Team.Highlight:Destroy()
+        Team.Billboard:Destroy()
+        TeamESPObjects[Player] = nil
+    end
+end)
+
+
+for _, Player in ipairs(Players:GetPlayers()) do
+    SetupESPPlayer(Player)
 end
 -- Setting up the UI
 local Window = Rayfield:CreateWindow({
@@ -262,14 +399,12 @@ local Window = Rayfield:CreateWindow({
         FileName = "MOUSEDSetting"
     }
 })
-
 -- Tabs
 local VisualsTab = Window:CreateTab("Visuals", nil)
 local MovementTab = Window:CreateTab("Movement", nil)
 local OthersTab = Window:CreateTab("Others", nil)
 local FunTab = Window:CreateTab("Fun", nil)
 local SettingsTab = Window:CreateTab("Settings", nil)
-
 -- Others Tab Features
 local LocalPlayer = Players.LocalPlayer
 local PlaceId = game.PlaceId
@@ -455,21 +590,34 @@ OthersTab:CreateToggle({
     Name = "Instant Prompts",
     CurrentValue = false,
     Flag = "InstantPrompts",
+
     Callback = function(Value)
+        InstantPromptsEnabled = Value
+
+        if PromptAddedConnection then
+            PromptAddedConnection:Disconnect()
+            PromptAddedConnection = nil
+        end
+
         for _, v in ipairs(workspace:GetDescendants()) do
             if v:IsA("ProximityPrompt") then
                 if OriginalHoldDurations[v] == nil then
                     OriginalHoldDurations[v] = v.HoldDuration
                 end
 
-                if Value then
-                    v.HoldDuration = 0
-                else
-                    v.HoldDuration = OriginalHoldDurations[v]
-                end
+                v.HoldDuration = Value and 0 or OriginalHoldDurations[v]
             end
         end
-    end,
+
+        if Value then
+            PromptAddedConnection = workspace.DescendantAdded:Connect(function(v)
+                if v:IsA("ProximityPrompt") then
+                    OriginalHoldDurations[v] = v.HoldDuration
+                    v.HoldDuration = 0
+                end
+            end)
+        end
+    end
 })
 
 OthersTab:CreateButton({
@@ -680,24 +828,291 @@ OthersTab:CreateToggle({
     end,
 })
 
-OthersTab:CreateInput({
-        Name = "Username of Player",
-   PlaceholderText = "USERNAME",
-   RemoveTextAfterFocusLost = false,
-   Callback = function(Text)
-      _G.playerTP = Text
-   end
+local function GetPlayerNames()
+    local Names = {}
+
+    for _, Player in ipairs(Players:GetPlayers()) do
+        if Player ~= LocalPlayer then
+            table.insert(Names, Player.Name)
+        end
+    end
+
+    table.sort(Names)
+
+    return Names
+end
+
+PlayerDropdown = OthersTab:CreateDropdown({
+    Name = "Select Player",
+    Options = GetPlayerNames(),
+    CurrentOption = {},
+    MultipleOptions = false,
+    Flag = "SelectedPlayer",
+
+    Callback = function(Option)
+        SelectedPlayer = Option[1]
+    end
 })
 
+local function UpdatePlayerList()
+    if PlayerDropdown then
+        PlayerDropdown:Refresh(GetPlayerNames())
+    end
+    -- Clear selection if the selected player left
+    if SelectedPlayer and not Players:FindFirstChild(SelectedPlayer) then
+        SelectedPlayer = nil
+    end
+end
+
+Players.PlayerAdded:Connect(function()
+    task.wait(0.1)
+    UpdatePlayerList()
+end)
+
+Players.PlayerRemoving:Connect(function()
+    task.wait(0.1)
+    UpdatePlayerList()
+end)
+
 OthersTab:CreateButton({
-        Name = "Go to Player",
-   Callback = function()
-      for _,v in pairs(game.Players:GetPlayers()) do
-         if string.lower(v.Name):find(string.lower(_G.playerTP)) then
-            game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame = v.Character.HumanoidRootPart.CFrame
-         end
-      end
-   end
+    Name = "Teleport To Player",
+    Callback = function()
+        if not SelectedPlayer then
+            Rayfield:Notify({
+                Title = "Teleport",
+                Content = "Select a player first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Target = Players:FindFirstChild(SelectedPlayer)
+        local Character = LocalPlayer.Character
+        local TargetCharacter = Target and Target.Character
+
+        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+        local TargetRoot = TargetCharacter and TargetCharacter:FindFirstChild("HumanoidRootPart")
+
+        if Root and TargetRoot then
+            Root.CFrame = TargetRoot.CFrame + Vector3.new(0, 3, 0)
+
+            Rayfield:Notify({
+                Title = "Teleport",
+                Content = "Teleported to " .. SelectedPlayer,
+                Duration = 2
+            })
+        else
+            Rayfield:Notify({
+                Title = "Teleport",
+                Content = "Player or character isn't loaded.",
+                Duration = 2
+            })
+        end
+    end,
+})
+
+OthersTab:CreateSlider({
+    Name = "Tween Speed",
+    Range = {10, 200},
+    Increment = 5,
+    CurrentValue = 50,
+    Flag = "PlayerTweenSpeed",
+
+    Callback = function(Value)
+        TweenSpeed = Value
+    end,
+})
+-- Tween To Player
+OthersTab:CreateButton({
+    Name = "Tween To Player",
+    Callback = function()
+        local Target = SelectedPlayer and Players:FindFirstChild(SelectedPlayer)
+        local Character = LocalPlayer.Character
+        local TargetCharacter = Target and Target.Character
+
+        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+        local TargetRoot = TargetCharacter and TargetCharacter:FindFirstChild("HumanoidRootPart")
+
+        if not Root or not TargetRoot then
+            Rayfield:Notify({
+                Title = "Tween",
+                Content = "Player or character isn't loaded.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Distance = (Root.Position - TargetRoot.Position).Magnitude
+        local Duration = math.max(Distance / TweenSpeed, 0.1)
+
+        local Tween = TweenService:Create(
+            Root,
+            TweenInfo.new(Duration, Enum.EasingStyle.Linear),
+            {CFrame = TargetRoot.CFrame + Vector3.new(0, 3, 0)}
+        )
+
+        Tween:Play()
+    end,
+})
+-- Walk To Player
+local function StopFollowPath()
+    if FollowPathBlockedConnection then
+        FollowPathBlockedConnection:Disconnect()
+        FollowPathBlockedConnection = nil
+    end
+
+    FollowPath = nil
+    FollowWaypoints = {}
+    FollowWaypointIndex = 1
+    FollowTargetPosition = nil
+end
+
+local function CreateFollowPath(StartPosition, TargetPosition)
+    local Path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentCanClimb = true,
+        WaypointSpacing = 3
+    })
+
+    local Success = pcall(function()
+        Path:ComputeAsync(StartPosition, TargetPosition)
+    end)
+
+    if Success and Path.Status == Enum.PathStatus.Success then
+        return Path
+    end
+
+    return nil
+end
+
+local function CalculateFollowPath()
+    local Character = LocalPlayer.Character
+    local Target = SelectedPlayer and Players:FindFirstChild(SelectedPlayer)
+
+    local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+    local TargetRoot = Target
+        and Target.Character
+        and Target.Character:FindFirstChild("HumanoidRootPart")
+
+    if not Root or not TargetRoot then
+        return false
+    end
+
+    local Path = CreateFollowPath(
+        Root.Position,
+        TargetRoot.Position
+    )
+
+    if not Path then
+        return false
+    end
+
+    if FollowPathBlockedConnection then
+        FollowPathBlockedConnection:Disconnect()
+        FollowPathBlockedConnection = nil
+    end
+
+    FollowPath = Path
+    FollowWaypoints = Path:GetWaypoints()
+    FollowWaypointIndex = 2
+    FollowTargetPosition = TargetRoot.Position
+
+    FollowPathBlockedConnection = Path.Blocked:Connect(function(BlockedIndex)
+        if BlockedIndex >= FollowWaypointIndex then
+            FollowLastRepath = 0
+        end
+    end)
+
+    return #FollowWaypoints > 0
+end
+
+OthersTab:CreateToggle({
+    Name = "Walk to Player",
+    CurrentValue = false,
+    Flag = "FollowPlayer",
+
+    Callback = function(Value)
+        FollowEnabled = Value
+
+        if FollowConnection then
+            FollowConnection:Disconnect()
+            FollowConnection = nil
+        end
+
+        StopFollowPath()
+
+        if not Value then
+            return
+        end
+
+        FollowConnection = RunService.Heartbeat:Connect(function()
+            if not FollowEnabled then
+                return
+            end
+
+            local Character = LocalPlayer.Character
+            local Target = SelectedPlayer and Players:FindFirstChild(SelectedPlayer)
+
+            local Humanoid = Character
+                and Character:FindFirstChildOfClass("Humanoid")
+
+            local Root = Character
+                and Character:FindFirstChild("HumanoidRootPart")
+
+            local TargetRoot = Target
+                and Target.Character
+                and Target.Character:FindFirstChild("HumanoidRootPart")
+
+            if not Humanoid or not Root or not TargetRoot then
+                return
+            end
+
+            local Distance = (Root.Position - TargetRoot.Position).Magnitude
+
+            -- Keep walking toward them when close.
+            if Distance <= 5 then
+                Humanoid:MoveTo(TargetRoot.Position)
+                return
+            end
+
+            local TargetMoved =
+                not FollowTargetPosition
+                or (TargetRoot.Position - FollowTargetPosition).Magnitude > 6
+
+            local PathFinished =
+                not FollowPath
+                or FollowWaypointIndex > #FollowWaypoints
+
+            local PathOld =
+                os.clock() - FollowLastRepath > 1
+            -- Continuously create new paths as the target moves.
+            if (PathFinished or TargetMoved or PathOld)
+                and os.clock() - FollowLastRepath > 0.2 then
+
+                FollowLastRepath = os.clock()
+                CalculateFollowPath()
+            end
+
+            local Waypoint = FollowWaypoints[FollowWaypointIndex]
+
+            if Waypoint then
+                if Waypoint.Action == Enum.PathWaypointAction.Jump then
+                    Humanoid.Jump = true
+                end
+
+                Humanoid:MoveTo(Waypoint.Position)
+
+                if (Root.Position - Waypoint.Position).Magnitude <= 3 then
+                    FollowWaypointIndex += 1
+                end
+            else
+                -- Never stop just because the path ended.
+                Humanoid:MoveTo(TargetRoot.Position)
+            end
+        end)
+    end
 })
 
 OthersTab:CreateButton({
@@ -715,19 +1130,26 @@ OthersTab:CreateButton({
 OthersTab:CreateToggle({
     Name = "Spin Bot",
     CurrentValue = false,
+
     Callback = function(Value)
+        if SpinConnection then
+            SpinConnection:Disconnect()
+            SpinConnection = nil
+        end
+
         if Value then
-            SpinConnection = game:GetService("RunService").RenderStepped:Connect(function(dt)
-                local Character = game.Players.LocalPlayer.Character
-                if Character and Character:FindFirstChild("HumanoidRootPart") then
-                    Character.HumanoidRootPart.CFrame *= CFrame.Angles(0, math.rad(SpinSpeed), 0)
+            SpinConnection = RunService.RenderStepped:Connect(function(dt)
+                local Character = LocalPlayer.Character
+                local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+                if Root then
+                    Root.CFrame *= CFrame.Angles(
+                        0,
+                        math.rad(SpinSpeed) * dt,
+                        0
+                    )
                 end
             end)
-        else
-            if SpinConnection then
-                SpinConnection:Disconnect()
-                SpinConnection = nil
-            end
         end
     end,
 })
@@ -758,220 +1180,53 @@ VisualsTab:CreateToggle({
 
 VisualsTab:CreateToggle({
     Name = "ESP",
-    CurrentValue = espEnabled,
+    CurrentValue = false,
     Flag = "ESPToggle",
+
     Callback = function(Value)
         if Value then
-            EnableESP()
+            EnableNormalESP()
         else
-            DisableESP()
+            DisableNormalESP()
         end
     end
 })
 
+
 VisualsTab:CreateToggle({
     Name = "Rainbow ESP",
-    CurrentValue = rainbowESP,
+    CurrentValue = false,
     Flag = "RainbowESPToggle",
+
     Callback = function(Value)
-        rainbowESP = Value
+        RainbowESP = Value
     end
 })
 
+
 VisualsTab:CreateColorPicker({
     Name = "ESP Color",
-    Color = espColor,
+    Color = ESPColor,
     Flag = "ESPColor",
+
     Callback = function(Value)
-        espColor = Value
-        selectedEspColor = Value
+        ESPColor = Value
     end
 })
+
 
 VisualsTab:CreateSlider({
     Name = "ESP Transparency",
     Range = {0, 1},
     Increment = 0.1,
     Suffix = "",
-    CurrentValue = espTransparency,
+    CurrentValue = ESPTransparency,
     Flag = "ESPTransparency",
+
     Callback = function(Value)
-        espTransparency = Value
-    end,
+        ESPTransparency = Value
+    end
 })
---// Team ESP Settings
-local espEnabled = false
-local espTransparency = 0.5
-
-local teamESPColor = Color3.fromRGB(0, 255, 0)
-local opponentESPColor = Color3.fromRGB(255, 0, 0)
-
-local espHighlights = {}
-local espUpdateConnection = nil
-
---// Get the correct color for a player
-local function GetESPColor(player)
-    -- Same team
-    if LocalPlayer.Team and player.Team == LocalPlayer.Team then
-        return teamESPColor
-    end
-
-    -- Opposing team / no team
-    return opponentESPColor
-end
-
-local function CreateESP(player)
-    if player == LocalPlayer then
-        return
-    end
-
-    if espHighlights[player] then
-        return
-    end
-
-    local highlight = Instance.new("Highlight")
-    highlight.FillTransparency = espTransparency
-    highlight.OutlineTransparency = math.max(0, espTransparency - 0.2)
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Enabled = espEnabled
-
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "ESPName"
-    billboard.AlwaysOnTop = true
-    billboard.Size = UDim2.new(0, 200, 0, 50)
-    billboard.StudsOffset = Vector3.new(0, 3, 0)
-    billboard.Enabled = espEnabled
-
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Name = "NameLabel"
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    nameLabel.Font = Enum.Font.SourceSansBold
-    nameLabel.TextStrokeTransparency = 0
-    nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    nameLabel.TextSize = 14
-    nameLabel.Text = player.Name
-    nameLabel.Parent = billboard
-
-    local distanceLabel = Instance.new("TextLabel")
-    distanceLabel.Name = "DistanceLabel"
-    distanceLabel.BackgroundTransparency = 1
-    distanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
-    distanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    distanceLabel.Font = Enum.Font.SourceSans
-    distanceLabel.TextStrokeTransparency = 0
-    distanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    distanceLabel.TextSize = 12
-    distanceLabel.Text = "0 studs"
-    distanceLabel.Parent = billboard
-
-    espHighlights[player] = {
-        highlight = highlight,
-        billboard = billboard,
-        nameLabel = nameLabel,
-        distanceLabel = distanceLabel
-    }
-
-    if player.Character then
-        highlight.Parent = player.Character
-
-        local head = player.Character:FindFirstChild("Head")
-        billboard.Parent = head or player.Character.PrimaryPart
-    end
-end
-
-local function UpdateESP()
-    for player, esp in pairs(espHighlights) do
-        if player.Character
-            and player.Character:FindFirstChild("HumanoidRootPart")
-            and player.Character:FindFirstChild("Humanoid")
-            and espEnabled then
-
-            local character = player.Character
-            local hrp = character.HumanoidRootPart
-
-            -- Get team/opponent color
-            local color = GetESPColor(player)
-
-            esp.highlight.FillColor = color
-            esp.highlight.OutlineColor = color
-            esp.nameLabel.TextColor3 = color
-            esp.distanceLabel.TextColor3 = color
-
-            -- Transparency
-            esp.highlight.FillTransparency = espTransparency
-            esp.highlight.OutlineTransparency =
-                math.max(0, espTransparency - 0.2)
-
-            -- Distance
-            if LocalPlayer.Character
-                and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-
-                local distance = math.floor(
-                    (LocalPlayer.Character.HumanoidRootPart.Position
-                    - hrp.Position).Magnitude
-                )
-
-                esp.distanceLabel.Text = tostring(distance) .. " studs"
-            end
-
-            -- Keep Highlight attached
-            if esp.highlight.Parent ~= character then
-                esp.highlight.Parent = character
-            end
-
-            -- Keep Billboard attached
-            local head = character:FindFirstChild("Head")
-
-            if head and esp.billboard.Parent ~= head then
-                esp.billboard.Parent = head
-            elseif esp.billboard.Parent == nil then
-                esp.billboard.Parent = character.PrimaryPart or hrp
-            end
-
-            esp.highlight.Enabled = true
-            esp.billboard.Enabled = true
-
-        else
-            if esp.highlight then
-                esp.highlight.Enabled = false
-            end
-
-            if esp.billboard then
-                esp.billboard.Enabled = false
-            end
-        end
-    end
-end
-
-local function EnableESP()
-    espEnabled = true
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and not espHighlights[player] then
-            CreateESP(player)
-        end
-    end
-
-    if not espUpdateConnection then
-        espUpdateConnection =
-            RunService.RenderStepped:Connect(UpdateESP)
-    end
-end
-
-local function DisableESP()
-    espEnabled = false
-
-    for _, esp in pairs(espHighlights) do
-        esp.highlight.Enabled = false
-        esp.billboard.Enabled = false
-    end
-
-    if espUpdateConnection then
-        espUpdateConnection:Disconnect()
-        espUpdateConnection = nil
-    end
-end
 
 VisualsTab:CreateToggle({
     Name = "Team ESP",
@@ -980,43 +1235,46 @@ VisualsTab:CreateToggle({
 
     Callback = function(Value)
         if Value then
-            EnableESP()
+            EnableTeamESP()
         else
-            DisableESP()
+            DisableTeamESP()
         end
     end
 })
 
+
 VisualsTab:CreateColorPicker({
     Name = "Team ESP Color",
-    Color = teamESPColor,
+    Color = TeamESPColor,
     Flag = "TeamESPColor",
 
     Callback = function(Value)
-        teamESPColor = Value
+        TeamESPColor = Value
     end
 })
+
 
 VisualsTab:CreateColorPicker({
     Name = "Opponent ESP Color",
-    Color = opponentESPColor,
+    Color = OpponentESPColor,
     Flag = "OpponentESPColor",
 
     Callback = function(Value)
-        opponentESPColor = Value
+        OpponentESPColor = Value
     end
 })
+
 
 VisualsTab:CreateSlider({
     Name = "Team ESP Transparency",
     Range = {0, 1},
     Increment = 0.1,
     Suffix = "",
-    CurrentValue = espTransparency,
+    CurrentValue = TeamESPTransparency,
     Flag = "TeamESPTransparency",
 
     Callback = function(Value)
-        espTransparency = Value
+        TeamESPTransparency = Value
     end
 })
 -- FOV Circle
@@ -1032,7 +1290,7 @@ local function IsVisible(Character)
         return true
     end
 
-    local Root = Character:FindFirstChild("HumanoidRootPart")
+    local Root = Character:FindFirstChild(AimPart)
     if not Root then
         return false
     end
@@ -1068,17 +1326,15 @@ local function GetClosestTarget()
 
     for _, Player in ipairs(Players:GetPlayers()) do
         if Player ~= LocalPlayer and Player.Character then
-
-            -- Simple team check
             if not TeamCheck or Player.Team ~= LocalPlayer.Team then
 
                 local Character = Player.Character
                 local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-                local Root = Character:FindFirstChild("HumanoidRootPart")
+                local TargetPart = Character:FindFirstChild(AimPart)
 
-                if Humanoid and Root and Humanoid.Health > 0 then
+                if Humanoid and TargetPart and Humanoid.Health > 0 then
                     local ScreenPosition, OnScreen =
-                        Camera:WorldToViewportPoint(Root.Position)
+                        Camera:WorldToViewportPoint(TargetPart.Position)
 
                     if OnScreen then
                         local Distance = (
@@ -1089,7 +1345,7 @@ local function GetClosestTarget()
                         if Distance <= ClosestDistance then
                             if IsVisible(Character) then
                                 ClosestDistance = Distance
-                                ClosestTarget = Root
+                                ClosestTarget = TargetPart
                             end
                         end
                     end
@@ -1100,7 +1356,6 @@ local function GetClosestTarget()
 
     return ClosestTarget
 end
-
 -- ONE aimbot loop only
 RunService.RenderStepped:Connect(function()
     local AimPosition = GetAimPosition()
@@ -1125,7 +1380,6 @@ RunService.RenderStepped:Connect(function()
     if not OnScreen then
         return
     end
-
     -- Higher Smoothness = slower/smoother movement
     local AimAmount = 1 - Smoothness
 
@@ -1208,6 +1462,27 @@ VisualsTab:CreateDropdown({
     end
 })
 
+VisualsTab:CreateDropdown({
+    Name = "Aim Part",
+    Options = {
+        "Head",
+        "HumanoidRootPart",
+        "UpperTorso",
+        "LowerTorso",
+        "LeftUpperArm",
+        "RightUpperArm",
+        "LeftUpperLeg",
+        "RightUpperLeg"
+    },
+    CurrentOption = {"Head"},
+    MultipleOptions = false,
+    Flag = "AimPart",
+
+    Callback = function(Option)
+        AimPart = Option[1]
+    end,
+})
+
 VisualsTab:CreateSlider({
     Name = "Aim Smoothness",
     Range = {1, 100},
@@ -1220,68 +1495,100 @@ VisualsTab:CreateSlider({
     end
 })
 --Movement Tabs
-MovementTab:CreateToggle({
-    Name = "Speed Hack",
-    CurrentValue = walkSpeedEnabled,
-    Flag = "SpeedToggle",
-    Callback = function(Value)
-        walkSpeedEnabled = Value
-        if Value then
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-                LocalPlayer.Character.Humanoid.WalkSpeed = currentWalkSpeed
-            end
+local function GetHumanoid()
+    local Character = LocalPlayer.Character
+    if not Character then
+        return nil
+    end
+
+    return Character:FindFirstChildOfClass("Humanoid")
+end
+
+local function ApplySpeed()
+    local Humanoid = GetHumanoid()
+    if not Humanoid or not SpeedEnabled then
+        return
+    end
+
+    Humanoid.WalkSpeed = CurrentSpeed
+end
+
+local function ApplyJump()
+    local Humanoid = GetHumanoid()
+    if not Humanoid or not JumpEnabled then
+        return
+    end
+    -- Games can use either JumpPower or JumpHeight.
+    if Humanoid.UseJumpPower then
+        Humanoid.JumpPower = CurrentJump
+    else
+        Humanoid.JumpHeight = CurrentJump
+    end
+end
+-- Reapply after respawn
+LocalPlayer.CharacterAdded:Connect(function(character)
+    local humanoid = character:WaitForChild("Humanoid")
+
+    if SpeedEnabled then
+        humanoid.WalkSpeed = CurrentSpeed
+    end
+
+    if JumpEnabled then
+        if humanoid.UseJumpPower then
+            humanoid.JumpPower = CurrentJump
         else
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-                LocalPlayer.Character.Humanoid.WalkSpeed = defaultWalkSpeed
-            end
+            humanoid.JumpHeight = CurrentJump
         end
     end
-})
+end)
 
 MovementTab:CreateToggle({
-    Name = "Speed Hack (Loop)",
-    CurrentValue = loopSpeedEnabled,
-    Flag = "LoopSpeedToggle",
+    Name = "Speed Hack",
+    CurrentValue = false,
+    Flag = "UniversalSpeed",
     Callback = function(Value)
-        loopSpeedEnabled = Value
+        SpeedEnabled = Value
 
         if Value then
-            task.spawn(function()
-                while loopSpeedEnabled do
-                    local Character = LocalPlayer.Character
-                    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-
-                    if Humanoid then
-                        Humanoid.WalkSpeed = currentWalkSpeed
-                    end
-
-                    task.wait(0.01)
-                end
-            end)
+            ApplySpeed()
         else
-            local Character = LocalPlayer.Character
-            local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+            local Humanoid = GetHumanoid()
 
             if Humanoid then
-                Humanoid.WalkSpeed = defaultWalkSpeed
+                Humanoid.WalkSpeed = 16
             end
         end
     end
 })
 
 MovementTab:CreateSlider({
-    Name = "Walk Speed",
+    Name = "Speed Value",
     Range = {1, 500},
     Increment = 1,
-    Suffix = "",
-    CurrentValue = currentWalkSpeed,
-    Flag = "WalkSpeedValue",
+    CurrentValue = 16,
+    Flag = "UniversalSpeedValue",
     Callback = function(Value)
-        currentWalkSpeed = Value
-        if walkSpeedEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-            LocalPlayer.Character.Humanoid.WalkSpeed = Value
+        CurrentSpeed = Value
+        ApplySpeed()
+    end
+})
+
+MovementTab:CreateToggle({
+    Name = "Speed (Loop)",
+    CurrentValue = false,
+    Flag = "UniversalSpeedLoop",
+    Callback = function(Value)
+        SpeedLoop = Value
+
+        if Value then
+            task.spawn(function()
+                while SpeedLoop do
+                    ApplySpeed()
+                    task.wait(0.1)
+                end
+            end)
         end
-    end,
+    end
 })
 
 MovementTab:CreateToggle({
@@ -1361,66 +1668,55 @@ MovementTab:CreateToggle({
 
 MovementTab:CreateToggle({
     Name = "Jump Power",
-    CurrentValue = jumpPowerEnabled,
-    Flag = "JumpToggle",
+    CurrentValue = false,
+    Flag = "UniversalJump",
     Callback = function(Value)
-        JumpPowerEnabled = Value
-        if Value then
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-                LocalPlayer.Character.Humanoid.JumpPower = currentJumpPower
-            end
-        else
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-                LocalPlayer.Character.Humanoid.JumpPower = defaultJumpPower
-            end
-        end
-    end
-})
-
-MovementTab:CreateToggle({
-    Name = "Jump Power (Loop)",
-    CurrentValue = loopJumpPowerEnabled,
-    Flag = "LoopJumpToggle",
-    Callback = function(Value)
-        loopJumpPowerEnabled = Value
+        JumpEnabled = Value
 
         if Value then
-            task.spawn(function()
-                while loopJumpPowerEnabled do
-                    local Character = LocalPlayer.Character
-                    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-
-                    if Humanoid then
-                        Humanoid.JumpPower = currentJumpPower
-                    end
-
-                    task.wait(0.01)
-                end
-            end)
+            ApplyJump()
         else
-            local Character = LocalPlayer.Character
-            local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+            local Humanoid = GetHumanoid()
 
             if Humanoid then
-                Humanoid.JumpPower = defaultJumpPower
+                if Humanoid.UseJumpPower then
+                    Humanoid.JumpPower = 50
+                else
+                    Humanoid.JumpHeight = 7.2
+                end
             end
         end
     end
 })
 
 MovementTab:CreateSlider({
-    Name = "Jump Height",
+    Name = "Jump Value",
     Range = {1, 500},
     Increment = 1,
-    Suffix = "",
-    CurrentValue = currentJumpPower,
-    Flag = "jumpPowerValue",
+    CurrentValue = 50,
+    Flag = "UniversalJumpValue",
     Callback = function(Value)
-        currentJumpPower = Value
-        if jumpPowerEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-            LocalPlayer.Character.Humanoid.JumpPower = Value
+        CurrentJump = Value
+        ApplyJump()
+    end
+})
+
+MovementTab:CreateToggle({
+    Name = "Jump (Loop)",
+    CurrentValue = false,
+    Flag = "UniversalJumpLoop",
+    Callback = function(Value)
+        JumpLoop = Value
+
+        if Value then
+            task.spawn(function()
+                while JumpLoop do
+                    ApplyJump()
+                    task.wait(0.1)
+                end
+            end)
         end
-    end,
+    end
 })
 
 MovementTab:CreateToggle({
@@ -1678,91 +1974,32 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.5"
+    Content = "1.1.6"
 })
--- Set up event handlers
-Players.PlayerAdded:Connect(function(player)
-    if player ~= LocalPlayer then
-        CreateESP(player)
-        
-        -- Handle character added for new players
-        player.CharacterAdded:Connect(function(character)
-            if espHighlights[player] then
-                espHighlights[player].highlight.Parent = character
-                local head = character:WaitForChild("Head", 3)
-                if head then
-                    espHighlights[player].billboard.Parent = head
-                else
-                    espHighlights[player].billboard.Parent = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
-                end
-            end
-        end)
-    end
-end)
-
-Players.PlayerRemoving:Connect(function(player)
-    if espHighlights[player] then
-        if espHighlights[player].highlight then
-            espHighlights[player].highlight:Destroy()
-        end
-        if espHighlights[player].billboard then
-            espHighlights[player].billboard:Destroy()
-        end
-        espHighlights[player] = nil
-    end
-end)
-
 -- Character added event for maintaining speed/jump settings
 LocalPlayer.CharacterAdded:Connect(function(character)
     local humanoid = character:WaitForChild("Humanoid")
-    
-    if walkSpeedEnabled then
-        humanoid.WalkSpeed = currentWalkSpeed
-    end
-    
-    if jumpPowerEnabled then
-        humanoid.JumpPower = currentJumpPower
-    end
-end)
 
--- Initialize ESP for existing players
-for _, player in pairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then
-        CreateESP(player)
-        
-        -- Set up character added event for existing players
-        player.CharacterAdded:Connect(function(character)
-            if espHighlights[player] then
-                espHighlights[player].highlight.Parent = character
-                local head = character:WaitForChild("Head", 3)
-                if head then
-                    espHighlights[player].billboard.Parent = head
-                else
-                    espHighlights[player].billboard.Parent = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
-                end
-            end
-        end)
-        
-        -- Apply to existing characters
-        if player.Character then
-            if espHighlights[player] then
-                espHighlights[player].highlight.Parent = player.Character
-                local head = player.Character:FindFirstChild("Head")
-                if head then
-                    espHighlights[player].billboard.Parent = head
-                else
-                    espHighlights[player].billboard.Parent = player.Character.PrimaryPart or player.Character:FindFirstChild("HumanoidRootPart")
-                end
-            end
+    if SpeedEnabled then
+        humanoid.WalkSpeed = CurrentSpeed
+    end
+
+    if JumpEnabled then
+        if humanoid.UseJumpPower then
+            humanoid.JumpPower = CurrentJump
+        else
+            humanoid.JumpHeight = CurrentJump
         end
     end
-end
+end)
 -- Show success notification
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.5 loaded successfully!",
+    Content = "Version 1.1.6 loaded successfully!",
     Duration = 3,
     Image = nil
 })
 
 print("If your your having issues with MOUSED with something then it's prob your executor so use something like madium.")
+task.wait(3)
+print("Make sure that your using the official MOUSED.")
