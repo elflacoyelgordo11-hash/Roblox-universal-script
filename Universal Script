@@ -40,6 +40,13 @@ local JumpConnection
 local JumpHeight = 50
 local SpeedLoop = false
 local JumpLoop = false
+local MovementMaintenanceConnection = nil
+local OriginalMovementValues = setmetatable({}, {__mode = "k"})
+local FlyEnabled = false
+local FlySpeed = 50
+local FlyConnection = nil
+local FlyBodyVelocity = nil
+local FlyBodyGyro = nil
 -- Game stuff
 local bypassEnabled = false
 local attachedToBall = false
@@ -49,6 +56,8 @@ local OldBrightness = Lighting.Brightness
 local OldGlobalShadows = Lighting.GlobalShadows
 local OldFogEnd = Lighting.FogEnd
 local AntiFlingEnabled = false
+local AntiFlingConnection = nil
+local OriginalCanCollide = setmetatable({}, {__mode = "k"})
 local OriginalHoldDurations = {}
 local TargetJobId = ""
 local SpinSpeed = 50
@@ -63,6 +72,9 @@ local TeamCheck = true
 local XRayEnabled = false
 local OriginalTransparency = {}
 local SelectedPlayer = nil
+local SpectatingPlayer = nil
+local OriginalCameraSubject = nil
+local OriginalCameraType = nil
 local TweenSpeed = 50
 local FollowEnabled = false
 local FollowConnection
@@ -78,26 +90,62 @@ local InstantPromptsEnabled = false
 local PromptAddedConnection
 -- Cursor thing
 local function CreateCustomCursor()
-    local cursor = Drawing.new("Circle")
-    cursor.Radius = 5
-    cursor.Filled = true
-    cursor.Color = Color3.fromRGB(255, 255, 255)
-    cursor.Transparency = 1
-    cursor.ZIndex = 999
-    cursor.Visible = true
+    local cursor
+    local CursorGui
+    local UsesDrawing = Drawing and Drawing.new
+
+    if UsesDrawing then
+        cursor = Drawing.new("Circle")
+        cursor.Radius = 5
+        cursor.Filled = true
+        cursor.Color = Color3.fromRGB(255, 255, 255)
+        cursor.Transparency = 1
+        cursor.ZIndex = 999
+        cursor.Visible = true
+    else
+        CursorGui = Instance.new("ScreenGui")
+        CursorGui.Name = "CustomCursorGui"
+        CursorGui.IgnoreGuiInset = true
+        CursorGui.DisplayOrder = 999999
+        CursorGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+        cursor = Instance.new("Frame")
+        cursor.Name = "CustomCursorCircle"
+        cursor.AnchorPoint = Vector2.new(0.5, 0.5)
+        cursor.Size = UDim2.fromOffset(10, 10)
+        cursor.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        cursor.BorderSizePixel = 0
+        cursor.Parent = CursorGui
+
+        local Corner = Instance.new("UICorner")
+        Corner.CornerRadius = UDim.new(1, 0)
+        Corner.Parent = cursor
+    end
+
     -- Update cursor position
     local connection = RunService.RenderStepped:Connect(function()
         local mousePos = UserInputService:GetMouseLocation()
-        cursor.Position = Vector2.new(mousePos.X, mousePos.Y)
+
+        if UsesDrawing then
+            cursor.Position = Vector2.new(mousePos.X, mousePos.Y)
+        else
+            cursor.Position = UDim2.fromOffset(mousePos.X, mousePos.Y)
+        end
     end)
     -- Hide the default Roblox cursor
     UserInputService.MouseIconEnabled = false
     
     return {
         Cursor = cursor,
+        CursorGui = CursorGui,
+        UsesDrawing = UsesDrawing,
         Connection = connection,
         Remove = function(self)
-            self.Cursor:Remove()
+            if self.UsesDrawing then
+                self.Cursor:Remove()
+            else
+                self.CursorGui:Destroy()
+            end
             self.Connection:Disconnect()
             UserInputService.MouseIconEnabled = true
         end
@@ -116,6 +164,7 @@ local function DisableCustomCursor()
         customCursor = nil
     end
 end
+
 -- ESP Functions
 
 local function CreateESP(Player, ObjectTable, Prefix)
@@ -162,8 +211,49 @@ local function CreateESP(Player, ObjectTable, Prefix)
         Highlight = Highlight,
         Billboard = Billboard,
         NameLabel = NameLabel,
-        DistanceLabel = DistanceLabel
+        DistanceLabel = DistanceLabel,
+        BodyPartBoxes = {}
     }
+end
+
+local function ClearBodyPartBoxes(ESP)
+    for Part, Box in pairs(ESP.BodyPartBoxes) do
+        Box:Destroy()
+        ESP.BodyPartBoxes[Part] = nil
+    end
+end
+
+local function UpdateBodyPartBoxes(Character, ESP, Color, Transparency)
+    local CurrentParts = {}
+
+    for _, Part in ipairs(Character:GetDescendants()) do
+        if Part:IsA("BasePart") and Part.Transparency < 1 then
+            CurrentParts[Part] = true
+
+            local Box = ESP.BodyPartBoxes[Part]
+
+            if not Box then
+                Box = Instance.new("BoxHandleAdornment")
+                Box.Name = "BodyPartESP"
+                Box.Adornee = Part
+                Box.AlwaysOnTop = true
+                Box.ZIndex = 5
+                Box.Parent = Part
+                ESP.BodyPartBoxes[Part] = Box
+            end
+
+            Box.Size = Part.Size
+            Box.Color3 = Color
+            Box.Transparency = math.clamp(Transparency + 0.2, 0, 1)
+        end
+    end
+
+    for Part, Box in pairs(ESP.BodyPartBoxes) do
+        if not CurrentParts[Part] then
+            Box:Destroy()
+            ESP.BodyPartBoxes[Part] = nil
+        end
+    end
 end
 
 local function AttachESP(Player, ESP)
@@ -173,23 +263,36 @@ local function AttachESP(Player, ESP)
         return
     end
 
+    ESP.Highlight.Adornee = Character
     ESP.Highlight.Parent = Character
 
     local Head = Character:FindFirstChild("Head")
+        or Character:FindFirstChild("UpperTorso")
+        or Character:FindFirstChild("Torso")
 
     if Head then
         ESP.Billboard.Parent = Head
     end
 end
 
-local function UpdateESPObject(Player, ESP, Enabled, Color, Transparency)
+local function UpdateESPObject(Player, ESP, Enabled, Color, Transparency, UseBodyPartFallback)
     local Character = Player.Character
-    local Root = Character and Character:FindFirstChild("HumanoidRootPart")
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+    local Root = Character and (
+        Character:FindFirstChild("HumanoidRootPart")
+        or Character:FindFirstChild("UpperTorso")
+        or Character:FindFirstChild("Torso")
+        or Character.PrimaryPart
+    )
 
-    if not Enabled or not Character or not Root or not Humanoid or Humanoid.Health <= 0 then
+    if Character and not Root then
+        Root = Character:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    if not Enabled or not Character or not Root or (Humanoid and Humanoid.Health <= 0) then
         ESP.Highlight.Enabled = false
         ESP.Billboard.Enabled = false
+        ClearBodyPartBoxes(ESP)
         return
     end
 
@@ -222,13 +325,26 @@ local function UpdateESPObject(Player, ESP, Enabled, Color, Transparency)
         ESP.Highlight.Parent = Character
     end
 
+    if ESP.Highlight.Adornee ~= Character then
+        ESP.Highlight.Adornee = Character
+    end
+
     local Head = Character:FindFirstChild("Head")
+        or Character:FindFirstChild("UpperTorso")
+        or Character:FindFirstChild("Torso")
+        or Root
 
     if Head and ESP.Billboard.Parent ~= Head then
         ESP.Billboard.Parent = Head
     end
 
-    ESP.Highlight.Enabled = true
+    if UseBodyPartFallback then
+        ESP.Highlight.Enabled = false
+        UpdateBodyPartBoxes(Character, ESP, FinalColor, Transparency)
+    else
+        ClearBodyPartBoxes(ESP)
+        ESP.Highlight.Enabled = true
+    end
     ESP.Billboard.Enabled = true
 end
 
@@ -257,6 +373,8 @@ local function SetupESPPlayer(Player)
 end
 
 local function UpdateNormalESP()
+    local HighlightCount = 0
+
     for Player, ESP in pairs(ESPObjects) do
         local Color = ESPColor
 
@@ -269,8 +387,13 @@ local function UpdateNormalESP()
             ESP,
             ESPEnabled,
             Color,
-            ESPTransparency
+            ESPTransparency,
+            HighlightCount >= 31
         )
+
+        if HighlightCount < 31 then
+            HighlightCount = HighlightCount + 1
+        end
     end
 end
 
@@ -313,6 +436,7 @@ local function DisableNormalESP()
     for _, ESP in pairs(ESPObjects) do
         ESP.Highlight.Enabled = false
         ESP.Billboard.Enabled = false
+        ClearBodyPartBoxes(ESP)
     end
 end
 
@@ -335,6 +459,7 @@ local function DisableTeamESP()
     for _, ESP in pairs(TeamESPObjects) do
         ESP.Highlight.Enabled = false
         ESP.Billboard.Enabled = false
+        ClearBodyPartBoxes(ESP)
     end
 end
 
@@ -587,6 +712,46 @@ OthersTab:CreateToggle({
 })
 
 OthersTab:CreateToggle({
+    Name = "Anti Fling",
+    CurrentValue = false,
+    Flag = "AntiFling",
+    Callback = function(Option)
+        AntiFlingEnabled = Option
+
+        if AntiFlingConnection then
+            AntiFlingConnection:Disconnect()
+            AntiFlingConnection = nil
+        end
+
+        if AntiFlingEnabled then
+            AntiFlingConnection = RunService.Stepped:Connect(function()
+                for _, Player in ipairs(Players:GetPlayers()) do
+                    if Player ~= LocalPlayer and Player.Character then
+                        for _, Part in ipairs(Player.Character:GetDescendants()) do
+                            if Part:IsA("BasePart") then
+                                if OriginalCanCollide[Part] == nil then
+                                    OriginalCanCollide[Part] = Part.CanCollide
+                                end
+
+                                Part.CanCollide = false
+                            end
+                        end
+                    end
+                end
+            end)
+        else
+            for Part, Original in pairs(OriginalCanCollide) do
+                if Part and Part.Parent then
+                    Part.CanCollide = Original
+                end
+
+                OriginalCanCollide[Part] = nil
+            end
+        end
+    end
+})
+
+OthersTab:CreateToggle({
     Name = "Instant Prompts",
     CurrentValue = false,
     Flag = "InstantPrompts",
@@ -621,21 +786,85 @@ OthersTab:CreateToggle({
 })
 
 OthersTab:CreateButton({
-        Name = "Click TP (Tool)",
-   Callback = function()
-      local tool = Instance.new("Tool")
-      tool.Name = "Click TP"
-      tool.RequiresHandle = false
+    Name = "Click TP (Tool)",
+    Callback = function()
+        local Backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        local Character = LocalPlayer.Character
 
-      tool.Activated:Connect(function()
-         local mouse = game.Players.LocalPlayer:GetMouse()
-         if mouse.Hit then
-            game.Players.LocalPlayer.Character:MoveTo(mouse.Hit.Position)
-         end
-      end)
+        if not Backpack then
+            return
+        end
 
-      tool.Parent = game.Players.LocalPlayer.Backpack
-   end
+        local ExistingTool = Backpack:FindFirstChild("Click TP")
+            or (Character and Character:FindFirstChild("Click TP"))
+
+        if ExistingTool then
+            ExistingTool:Destroy()
+        end
+
+        local Tool = Instance.new("Tool")
+        Tool.Name = "Click TP"
+        Tool.RequiresHandle = false
+        Tool.CanBeDropped = false
+
+        Tool.Activated:Connect(function()
+            local Mouse = LocalPlayer:GetMouse()
+            local CurrentCharacter = LocalPlayer.Character
+
+            if Mouse.Hit and CurrentCharacter then
+                CurrentCharacter:MoveTo(Mouse.Hit.Position)
+            end
+        end)
+
+        Tool.Parent = Backpack
+    end
+})
+
+OthersTab:CreateButton({
+    Name = "Click Tween (Tool)",
+    Callback = function()
+        local Backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        local Character = LocalPlayer.Character
+
+        if not Backpack then
+            return
+        end
+
+        local ExistingTool = Backpack:FindFirstChild("Click Tween")
+            or (Character and Character:FindFirstChild("Click Tween"))
+
+        if ExistingTool then
+            ExistingTool:Destroy()
+        end
+
+        local Tool = Instance.new("Tool")
+        Tool.Name = "Click Tween"
+        Tool.RequiresHandle = false
+        Tool.CanBeDropped = false
+
+        Tool.Activated:Connect(function()
+            local Mouse = LocalPlayer:GetMouse()
+            local CurrentCharacter = LocalPlayer.Character
+            local Root = CurrentCharacter and CurrentCharacter:FindFirstChild("HumanoidRootPart")
+
+            if not Mouse.Hit or not Root then
+                return
+            end
+
+            local TargetPosition = Mouse.Hit.Position + Vector3.new(0, 3, 0)
+            local Distance = (Root.Position - TargetPosition).Magnitude
+            local Duration = math.max(Distance / math.max(TweenSpeed, 1), 0.1)
+            local Tween = TweenService:Create(
+                Root,
+                TweenInfo.new(Duration, Enum.EasingStyle.Linear),
+                {CFrame = CFrame.new(TargetPosition)}
+            )
+
+            Tween:Play()
+        end)
+
+        Tool.Parent = Backpack
+    end
 })
 
 OthersTab:CreateToggle({
@@ -851,6 +1080,87 @@ PlayerDropdown = OthersTab:CreateDropdown({
 
     Callback = function(Option)
         SelectedPlayer = Option[1]
+    end
+})
+
+local function StopSpectating()
+    if not SpectatingPlayer then
+        return
+    end
+
+    local Character = LocalPlayer.Character
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+    Camera.CameraType = OriginalCameraType or Enum.CameraType.Custom
+    Camera.CameraSubject = Humanoid or OriginalCameraSubject
+    SpectatingPlayer = nil
+    OriginalCameraSubject = nil
+    OriginalCameraType = nil
+end
+
+local function StartSpectating()
+    if not SelectedPlayer then
+        Rayfield:Notify({
+            Title = "Spectate",
+            Content = "Select a player first.",
+            Duration = 2
+        })
+        return
+    end
+
+    local Target = Players:FindFirstChild(SelectedPlayer)
+    local Humanoid = Target and Target.Character
+        and Target.Character:FindFirstChildOfClass("Humanoid")
+
+    if not Humanoid then
+        Rayfield:Notify({
+            Title = "Spectate",
+            Content = "Player or character isn't loaded.",
+            Duration = 2
+        })
+        return
+    end
+
+    if not SpectatingPlayer then
+        OriginalCameraSubject = Camera.CameraSubject
+        OriginalCameraType = Camera.CameraType
+    end
+
+    SpectatingPlayer = Target
+    Camera.CameraType = Enum.CameraType.Custom
+    Camera.CameraSubject = Humanoid
+end
+
+RunService.RenderStepped:Connect(function()
+    if not SpectatingPlayer then
+        return
+    end
+
+    if not SpectatingPlayer.Parent then
+        StopSpectating()
+        return
+    end
+
+    local Character = SpectatingPlayer.Character
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+    if Humanoid then
+        Camera.CameraSubject = Humanoid
+    else
+        StopSpectating()
+    end
+end)
+
+OthersTab:CreateToggle({
+    Name = "Spectate Player",
+    CurrentValue = false,
+    Flag = "SpectatePlayer",
+    Callback = function(Value)
+        if Value then
+            StartSpectating()
+        else
+            StopSpectating()
+        end
     end
 })
 
@@ -1278,12 +1588,54 @@ VisualsTab:CreateSlider({
     end
 })
 -- FOV Circle
-local FOVCircle = Drawing.new("Circle")
-FOVCircle.Visible = false
-FOVCircle.Radius = Radius
-FOVCircle.Thickness = 2
-FOVCircle.Filled = false
-FOVCircle.Transparency = 1
+local FOVCircle
+local FOVCircleGui
+local FOVCircleStroke
+local UsesDrawing = Drawing and Drawing.new
+
+if UsesDrawing then
+    FOVCircle = Drawing.new("Circle")
+    FOVCircle.Visible = false
+    FOVCircle.Radius = Radius
+    FOVCircle.Thickness = 2
+    FOVCircle.Filled = false
+    FOVCircle.Transparency = 1
+else
+    FOVCircleGui = Instance.new("ScreenGui")
+    FOVCircleGui.Name = "FOVCircleGui"
+    FOVCircleGui.IgnoreGuiInset = true
+    FOVCircleGui.DisplayOrder = 999998
+    FOVCircleGui.Enabled = false
+    FOVCircleGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    FOVCircle = Instance.new("Frame")
+    FOVCircle.Name = "FOVCircle"
+    FOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+    FOVCircle.BackgroundTransparency = 1
+    FOVCircle.BorderSizePixel = 0
+    FOVCircle.Parent = FOVCircleGui
+
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(1, 0)
+    Corner.Parent = FOVCircle
+
+    FOVCircleStroke = Instance.new("UIStroke")
+    FOVCircleStroke.Thickness = 2
+    FOVCircleStroke.Color = Color3.fromRGB(255, 255, 255)
+    FOVCircleStroke.Parent = FOVCircle
+end
+
+local function UpdateFOVCircle(Position, CircleRadius, Visible)
+    if UsesDrawing then
+        FOVCircle.Position = Position
+        FOVCircle.Radius = CircleRadius
+        FOVCircle.Visible = Visible
+    else
+        FOVCircle.Position = UDim2.fromOffset(Position.X, Position.Y)
+        FOVCircle.Size = UDim2.fromOffset(CircleRadius * 2, CircleRadius * 2)
+        FOVCircleGui.Enabled = Visible
+    end
+end
 
 local function IsVisible(Character)
     if not WallCheck then
@@ -1360,9 +1712,7 @@ end
 RunService.RenderStepped:Connect(function()
     local AimPosition = GetAimPosition()
 
-    FOVCircle.Position = AimPosition
-    FOVCircle.Radius = Radius
-    FOVCircle.Visible = AimbotEnabled
+    UpdateFOVCircle(AimPosition, Radius, AimbotEnabled)
 
     if not AimbotEnabled then
         return
@@ -1510,6 +1860,17 @@ local function ApplySpeed()
         return
     end
 
+    local Original = OriginalMovementValues[Humanoid]
+
+    if not Original then
+        Original = {
+            WalkSpeed = Humanoid.WalkSpeed,
+            JumpPower = Humanoid.JumpPower,
+            JumpHeight = Humanoid.JumpHeight
+        }
+        OriginalMovementValues[Humanoid] = Original
+    end
+
     Humanoid.WalkSpeed = CurrentSpeed
 end
 
@@ -1518,15 +1879,159 @@ local function ApplyJump()
     if not Humanoid or not JumpEnabled then
         return
     end
-    -- Games can use either JumpPower or JumpHeight.
+
+    local Original = OriginalMovementValues[Humanoid]
+
+    if not Original then
+        Original = {
+            WalkSpeed = Humanoid.WalkSpeed,
+            JumpPower = Humanoid.JumpPower,
+            JumpHeight = Humanoid.JumpHeight
+        }
+        OriginalMovementValues[Humanoid] = Original
+    end
+
     if Humanoid.UseJumpPower then
         Humanoid.JumpPower = CurrentJump
     else
         Humanoid.JumpHeight = CurrentJump
     end
 end
+
+local function RestoreMovement()
+    local Humanoid = GetHumanoid()
+    local Original = Humanoid and OriginalMovementValues[Humanoid]
+
+    if not Humanoid or not Original then
+        return
+    end
+
+    Humanoid.WalkSpeed = Original.WalkSpeed
+    Humanoid.JumpPower = Original.JumpPower
+    Humanoid.JumpHeight = Original.JumpHeight
+    OriginalMovementValues[Humanoid] = nil
+end
+
+local function UpdateMovement()
+    if SpeedEnabled then
+        ApplySpeed()
+    end
+
+    if JumpEnabled then
+        ApplyJump()
+    end
+end
+
+local function UpdateMovementConnection()
+    if SpeedEnabled or JumpEnabled then
+        if not MovementMaintenanceConnection then
+            MovementMaintenanceConnection = RunService.Heartbeat:Connect(UpdateMovement)
+        end
+    elseif MovementMaintenanceConnection then
+        MovementMaintenanceConnection:Disconnect()
+        MovementMaintenanceConnection = nil
+    end
+end
+
+local function StopFly()
+    if FlyConnection then
+        FlyConnection:Disconnect()
+        FlyConnection = nil
+    end
+
+    if FlyBodyVelocity then
+        FlyBodyVelocity:Destroy()
+        FlyBodyVelocity = nil
+    end
+
+    if FlyBodyGyro then
+        FlyBodyGyro:Destroy()
+        FlyBodyGyro = nil
+    end
+end
+
+local function StartFly()
+    StopFly()
+
+    FlyConnection = RunService.Heartbeat:Connect(function()
+        local Character = LocalPlayer.Character
+        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+        if not Root then
+            return
+        end
+
+        if not FlyBodyVelocity or FlyBodyVelocity.Parent ~= Root then
+            FlyBodyVelocity = Instance.new("BodyVelocity")
+            FlyBodyVelocity.Name = "MOUSED_FlyVelocity"
+            FlyBodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+            FlyBodyVelocity.P = 5000
+            FlyBodyVelocity.Parent = Root
+        end
+
+        if not FlyBodyGyro or FlyBodyGyro.Parent ~= Root then
+            FlyBodyGyro = Instance.new("BodyGyro")
+            FlyBodyGyro.Name = "MOUSED_FlyGyro"
+            FlyBodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+            FlyBodyGyro.P = 5000
+            FlyBodyGyro.Parent = Root
+        end
+
+        local CameraCFrame = Camera.CFrame
+        local Forward = Vector3.new(
+            CameraCFrame.LookVector.X,
+            0,
+            CameraCFrame.LookVector.Z
+        )
+        local Right = Vector3.new(
+            CameraCFrame.RightVector.X,
+            0,
+            CameraCFrame.RightVector.Z
+        )
+        local Horizontal = Vector3.zero
+
+        if Forward.Magnitude > 0 then
+            FlyBodyGyro.CFrame = CFrame.lookAt(
+                Root.Position,
+                Root.Position + Forward.Unit
+            )
+        end
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            Horizontal += Forward
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            Horizontal -= Forward
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            Horizontal += Right
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            Horizontal -= Right
+        end
+
+        if Horizontal.Magnitude > 1 then
+            Horizontal = Horizontal.Unit
+        end
+
+        local Vertical = 0
+        if UserInputService:IsKeyDown(Enum.KeyCode.E) then
+            Vertical += 1
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+            Vertical -= 1
+        end
+
+        FlyBodyVelocity.Velocity = Horizontal * FlySpeed
+            + Vector3.new(0, Vertical * FlySpeed, 0)
+    end)
+end
 -- Reapply after respawn
 LocalPlayer.CharacterAdded:Connect(function(character)
+    if FlyEnabled then
+        task.defer(StartFly)
+    end
+
     local humanoid = character:WaitForChild("Humanoid")
 
     if SpeedEnabled then
@@ -1552,12 +2057,10 @@ MovementTab:CreateToggle({
         if Value then
             ApplySpeed()
         else
-            local Humanoid = GetHumanoid()
-
-            if Humanoid then
-                Humanoid.WalkSpeed = 16
-            end
+            RestoreMovement()
         end
+
+        UpdateMovementConnection()
     end
 })
 
@@ -1588,6 +2091,32 @@ MovementTab:CreateToggle({
                 end
             end)
         end
+    end
+})
+
+MovementTab:CreateToggle({
+    Name = "Fly",
+    CurrentValue = false,
+    Flag = "UniversalFly",
+    Callback = function(Value)
+        FlyEnabled = Value
+
+        if Value then
+            StartFly()
+        else
+            StopFly()
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Fly Speed",
+    Range = {1, 300},
+    Increment = 1,
+    CurrentValue = FlySpeed,
+    Flag = "UniversalFlySpeed",
+    Callback = function(Value)
+        FlySpeed = Value
     end
 })
 
@@ -1676,16 +2205,10 @@ MovementTab:CreateToggle({
         if Value then
             ApplyJump()
         else
-            local Humanoid = GetHumanoid()
-
-            if Humanoid then
-                if Humanoid.UseJumpPower then
-                    Humanoid.JumpPower = 50
-                else
-                    Humanoid.JumpHeight = 7.2
-                end
-            end
+            RestoreMovement()
         end
+
+        UpdateMovementConnection()
     end
 })
 
@@ -1761,7 +2284,7 @@ MovementTab:CreateButton({
         end
     end,
 })
---Settings
+
 SettingsTab:CreateButton({
    Name = "Open DEX",
     Callback = function()
@@ -1783,7 +2306,6 @@ game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId,game.Job
    end,
 })
 
-local Camera = workspace.CurrentCamera
 local FOV = Camera.FieldOfView
 
 SettingsTab:CreateSlider({
@@ -1821,8 +2343,13 @@ SettingsTab:CreateButton({
 SettingsTab:CreateButton({
    Name = "Executor level checker",
    Callback = function()
-   printidentity("Based On " .. identifyexecutor() .. ". Your executor level is")
---It should tell you it in the console
+    local ExecutorName = identifyexecutor and identifyexecutor() or "Unknown executor"
+
+    if printidentity then
+         printidentity("Based On " .. ExecutorName .. ". Your executor level is")
+    else
+         print("Based On " .. ExecutorName .. ". Executor identity API unavailable.")
+    end
    end,
 })
 
@@ -1974,7 +2501,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.6"
+    Content = "1.1.7"
 })
 -- Character added event for maintaining speed/jump settings
 LocalPlayer.CharacterAdded:Connect(function(character)
@@ -1992,10 +2519,38 @@ LocalPlayer.CharacterAdded:Connect(function(character)
         end
     end
 end)
+local function NotifyExecutorCapabilities()
+    local Missing = {}
+
+    if not (Drawing and Drawing.new) then
+        table.insert(Missing, "Drawing")
+    end
+    if not loadstring then
+        table.insert(Missing, "loadstring")
+    end
+    if not game.HttpGet then
+        table.insert(Missing, "HttpGet")
+    end
+    if not mousemoverel then
+        table.insert(Missing, "mousemoverel")
+    end
+    if not setclipboard then
+        table.insert(Missing, "clipboard")
+    end
+
+    if #Missing > 0 then
+        Rayfield:Notify({
+            Title = "Executor Compatibility",
+            Content = "Missing: " .. table.concat(Missing, ", ") .. ". Some features may not work.",
+            Duration = 6
+        })
+    end
+end
 -- Show success notification
+NotifyExecutorCapabilities()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.6 loaded successfully!",
+    Content = "Version 1.1.7 loaded successfully!",
     Duration = 3,
     Image = nil
 })
