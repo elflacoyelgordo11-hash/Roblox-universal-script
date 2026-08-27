@@ -33,14 +33,15 @@ local CurrentSpeed = 16
 local CurrentJump = 50
 local SpeedEnabled = false
 local JumpEnabled = false
-local currentWalkSpeed = 16
-local currentJumpPower = 50
 local InfiniteJump = false
 local JumpConnection
 local JumpHeight = 50
 local SpeedLoop = false
 local JumpLoop = false
 local MovementMaintenanceConnection = nil
+local NoclipConnection = nil
+local NoclipDescendantConnection = nil
+local NoclipEnabled = false
 local OriginalMovementValues = setmetatable({}, {__mode = "k"})
 local FlyEnabled = false
 local FlySpeed = 50
@@ -49,21 +50,20 @@ local FlyBodyVelocity = nil
 local FlyBodyGyro = nil
 -- Game stuff
 local bypassEnabled = false
-local attachedToBall = false
-local ballAttachConnection = nil
 local AntiAFK = false
+local AntiAFKConnection = nil
 local OldBrightness = Lighting.Brightness
 local OldGlobalShadows = Lighting.GlobalShadows
 local OldFogEnd = Lighting.FogEnd
 local AntiFlingEnabled = false
 local AntiFlingConnection = nil
 local OriginalCanCollide = setmetatable({}, {__mode = "k"})
+local OriginalNoclipCanCollide = setmetatable({}, {__mode = "k"})
 local OriginalHoldDurations = {}
 local TargetJobId = ""
 local SpinSpeed = 50
 local SpinConnection
 local Radius = 150
-local ShowRadius = false
 local AimbotEnabled = false
 local WallCheck = true
 local Smoothness = 0.85
@@ -84,6 +84,7 @@ local FollowWaypointIndex = 1
 local FollowTargetPosition = nil
 local FollowPathBlockedConnection = nil
 local FollowLastRepath = 0
+local FollowLastJump = 0
 local PlayerDropdown
 local AimPart = "Head"
 local InstantPromptsEnabled = false
@@ -488,31 +489,6 @@ end)
 for _, Player in ipairs(Players:GetPlayers()) do
     SetupESPPlayer(Player)
 end
-
-
-Players.PlayerRemoving:Connect(function(Player)
-
-    local Normal = ESPObjects[Player]
-
-    if Normal then
-        Normal.Highlight:Destroy()
-        Normal.Billboard:Destroy()
-        ESPObjects[Player] = nil
-    end
-
-    local Team = TeamESPObjects[Player]
-
-    if Team then
-        Team.Highlight:Destroy()
-        Team.Billboard:Destroy()
-        TeamESPObjects[Player] = nil
-    end
-end)
-
-
-for _, Player in ipairs(Players:GetPlayers()) do
-    SetupESPPlayer(Player)
-end
 -- Setting up the UI
 local Window = Rayfield:CreateWindow({
     Name = "MOUSED universal hub",
@@ -530,6 +506,48 @@ local MovementTab = Window:CreateTab("Movement", nil)
 local OthersTab = Window:CreateTab("Others", nil)
 local FunTab = Window:CreateTab("Fun", nil)
 local SettingsTab = Window:CreateTab("Settings", nil)
+local CoreGUITab = Window:CreateTab("Core GUI", nil)
+
+local StarterGui = game:GetService("StarterGui")
+
+CoreGUITab:CreateSection("Roblox Core GUI")
+
+local function SetCoreGuiEnabled(CoreGuiType, Enabled, Name)
+    local Success = pcall(function()
+        StarterGui:SetCoreGuiEnabled(CoreGuiType, Enabled)
+    end)
+
+    if not Success then
+        Rayfield:Notify({
+            Title = "Core GUI Unsupported",
+            Content = Name .. " is not available in this game.",
+            Duration = 3
+        })
+    end
+end
+
+local CoreGUIOptions = {
+    {"Backpack", Enum.CoreGuiType.Backpack},
+    {"Chat", Enum.CoreGuiType.Chat},
+    {"Health", Enum.CoreGuiType.Health},
+    {"Player List", Enum.CoreGuiType.PlayerList},
+    {"Emotes Menu", Enum.CoreGuiType.EmotesMenu},
+    {"Self View", Enum.CoreGuiType.SelfView}
+}
+
+for _, Option in ipairs(CoreGUIOptions) do
+    local Name = Option[1]
+    local CoreGuiType = Option[2]
+
+    CoreGUITab:CreateToggle({
+        Name = Name,
+        CurrentValue = true,
+        Flag = "CoreGUI_" .. Name:gsub(" ", ""),
+        Callback = function(Value)
+            SetCoreGuiEnabled(CoreGuiType, Value, Name)
+        end
+    })
+end
 -- Others Tab Features
 local LocalPlayer = Players.LocalPlayer
 local PlaceId = game.PlaceId
@@ -641,6 +659,13 @@ loadstring(game:HttpGet("https://pastefy.app/wa3v2Vgm/raw"))()
             })
         end
     end,
+})
+
+FunTab:CreateButton({
+   Name = "Product Faker (I think doesnt work in delta and volcano.)",
+   Callback = function()
+  loadstring(game:HttpGet("https://pastefy.app/yVlxzwk8/raw"))()
+   end,
 })
 --Others
 OthersTab:CreateButton({
@@ -1083,6 +1108,58 @@ PlayerDropdown = OthersTab:CreateDropdown({
     end
 })
 
+local LastDeathCFrame = nil
+
+local function TrackDeathPosition(Character)
+    local Humanoid = Character:WaitForChild("Humanoid", 10)
+
+    if not Humanoid then
+        return
+    end
+
+    Humanoid.Died:Connect(function()
+        local Root = Character:FindFirstChild("HumanoidRootPart")
+
+        if Root then
+            LastDeathCFrame = Root.CFrame
+        end
+    end)
+end
+
+if LocalPlayer.Character then
+    task.spawn(TrackDeathPosition, LocalPlayer.Character)
+end
+
+LocalPlayer.CharacterAdded:Connect(TrackDeathPosition)
+
+OthersTab:CreateButton({
+    Name = "Teleport to Last Death",
+    Callback = function()
+        if not LastDeathCFrame then
+            Rayfield:Notify({
+                Title = "Last Death",
+                Content = "No death location has been recorded yet.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Character = LocalPlayer.Character
+        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+        if not Root then
+            Rayfield:Notify({
+                Title = "Last Death",
+                Content = "Your character is not loaded.",
+                Duration = 2
+            })
+            return
+        end
+
+        Root.CFrame = LastDeathCFrame + Vector3.new(0, 3, 0)
+    end
+})
+
 local function StopSpectating()
     if not SpectatingPlayer then
         return
@@ -1275,6 +1352,7 @@ local function StopFollowPath()
     FollowWaypoints = {}
     FollowWaypointIndex = 1
     FollowTargetPosition = nil
+    FollowLastJump = 0
 end
 
 local function CreateFollowPath(StartPosition, TargetPosition)
@@ -1395,10 +1473,14 @@ OthersTab:CreateToggle({
                 not FollowPath
                 or FollowWaypointIndex > #FollowWaypoints
 
-            local PathOld =
-                os.clock() - FollowLastRepath > 1
+            local PathOld = FollowPath
+                and os.clock() - FollowLastRepath > 2
             -- Continuously create new paths as the target moves.
-            if (PathFinished or TargetMoved or PathOld)
+            local State = Humanoid:GetState()
+            local IsAirborne = State == Enum.HumanoidStateType.Jumping
+                or State == Enum.HumanoidStateType.Freefall
+
+            if (PathFinished or ((TargetMoved or PathOld) and not IsAirborne))
                 and os.clock() - FollowLastRepath > 0.2 then
 
                 FollowLastRepath = os.clock()
@@ -1408,13 +1490,20 @@ OthersTab:CreateToggle({
             local Waypoint = FollowWaypoints[FollowWaypointIndex]
 
             if Waypoint then
-                if Waypoint.Action == Enum.PathWaypointAction.Jump then
-                    Humanoid.Jump = true
+                local WaypointDistance = (Root.Position - Waypoint.Position).Magnitude
+
+                if Waypoint.Action == Enum.PathWaypointAction.Jump
+                    and WaypointDistance <= 6 then
+                    if os.clock() - FollowLastJump > 0.6 then
+                        FollowLastJump = os.clock()
+                        Humanoid.Jump = true
+                        Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    end
                 end
 
                 Humanoid:MoveTo(Waypoint.Position)
 
-                if (Root.Position - Waypoint.Position).Magnitude <= 3 then
+                if WaypointDistance <= 3 then
                     FollowWaypointIndex += 1
                 end
             else
@@ -2246,30 +2335,54 @@ MovementTab:CreateToggle({
     Name = "Noclip",
     CurrentValue = false,
     Callback = function(Value)
+        NoclipEnabled = Value
+
+        if NoclipConnection then
+            NoclipConnection:Disconnect()
+            NoclipConnection = nil
+        end
+
+        if NoclipDescendantConnection then
+            NoclipDescendantConnection:Disconnect()
+            NoclipDescendantConnection = nil
+        end
+
         if Value then
-            NoclipConnection = game:GetService("RunService").Stepped:Connect(function()
-                local Character = game.Players.LocalPlayer.Character
+            local function DisableCharacterCollision(Character)
                 if Character then
                     for _, part in ipairs(Character:GetDescendants()) do
                         if part:IsA("BasePart") then
-                            part.CanCollide = false
+                            if OriginalNoclipCanCollide[part] == nil then
+                                OriginalNoclipCanCollide[part] = part.CanCollide
+                            end
+
+                            pcall(function()
+                                part.CanCollide = false
+                            end)
                         end
                     end
+                end
+
+            end
+
+            NoclipConnection = RunService.Stepped:Connect(function()
+                if NoclipEnabled then
+                    DisableCharacterCollision(LocalPlayer.Character)
                 end
             end)
-        else
-            if NoclipConnection then
-                NoclipConnection:Disconnect()
-                NoclipConnection = nil
 
-                local Character = game.Players.LocalPlayer.Character
-                if Character then
-                    for _, part in ipairs(Character:GetDescendants()) do
-                        if part:IsA("BasePart") then
-                            part.CanCollide = true
-                        end
-                    end
+            NoclipDescendantConnection = LocalPlayer.CharacterAdded:Connect(function(Character)
+                DisableCharacterCollision(Character)
+            end)
+
+            DisableCharacterCollision(LocalPlayer.Character)
+        else
+            for part, Original in pairs(OriginalNoclipCanCollide) do
+                if part and part.Parent then
+                    part.CanCollide = Original
                 end
+
+                OriginalNoclipCanCollide[part] = nil
             end
         end
     end,
@@ -2501,24 +2614,8 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.7"
+    Content = "1.1.8"
 })
--- Character added event for maintaining speed/jump settings
-LocalPlayer.CharacterAdded:Connect(function(character)
-    local humanoid = character:WaitForChild("Humanoid")
-
-    if SpeedEnabled then
-        humanoid.WalkSpeed = CurrentSpeed
-    end
-
-    if JumpEnabled then
-        if humanoid.UseJumpPower then
-            humanoid.JumpPower = CurrentJump
-        else
-            humanoid.JumpHeight = CurrentJump
-        end
-    end
-end)
 local function NotifyExecutorCapabilities()
     local Missing = {}
 
@@ -2550,7 +2647,7 @@ end
 NotifyExecutorCapabilities()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.7 loaded successfully!",
+    Content = "Version 1.1.8 loaded successfully!",
     Duration = 3,
     Image = nil
 })
