@@ -48,6 +48,12 @@ local FlySpeed = 50
 local FlyConnection = nil
 local FlyBodyVelocity = nil
 local FlyBodyGyro = nil
+local GravityEnabled = false
+local CurrentGravity = Workspace.Gravity
+local DefaultGravity = Workspace.Gravity
+local HipHeightEnabled = false
+local CurrentHipHeight = 0
+local OriginalHipHeight = {}
 -- Game stuff
 local bypassEnabled = false
 local AntiAFK = false
@@ -996,6 +1002,118 @@ OthersTab:CreateInput({
     end,
 })
 
+local WorkspacePartName = ""
+
+local function GetWorkspacePartByName(Name)
+    if not Name or Name == "" then
+        return nil
+    end
+
+    local SearchName = Name:lower()
+
+    for _, Part in ipairs(workspace:GetDescendants()) do
+        if Part:IsA("BasePart") and Part.Name:lower() == SearchName then
+            return Part
+        end
+    end
+
+    return workspace:FindFirstChild(Name, true)
+end
+
+OthersTab:CreateInput({
+    Name = "Workspace Part",
+    PlaceholderText = "Type a part name here...",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        WorkspacePartName = Text
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Teleport to Workspace Part",
+    Callback = function()
+        if WorkspacePartName == "" then
+            Rayfield:Notify({
+                Title = "Workspace Part",
+                Content = "Please enter a part name first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local TargetPart = GetWorkspacePartByName(WorkspacePartName)
+        if not TargetPart then
+            Rayfield:Notify({
+                Title = "Workspace Part",
+                Content = "No part named \"" .. WorkspacePartName .. "\" was found in Workspace.",
+                Duration = 3
+            })
+            return
+        end
+
+        local Character = LocalPlayer.Character
+        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+        if not Root then
+            Rayfield:Notify({
+                Title = "Workspace Part",
+                Content = "Your character is not loaded.",
+                Duration = 2
+            })
+            return
+        end
+
+        Root.CFrame = TargetPart.CFrame + Vector3.new(0, 3, 0)
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Tween to Workspace Part",
+    Callback = function()
+        if WorkspacePartName == "" then
+            Rayfield:Notify({
+                Title = "Workspace Part",
+                Content = "Please enter a part name first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local TargetPart = GetWorkspacePartByName(WorkspacePartName)
+        if not TargetPart then
+            Rayfield:Notify({
+                Title = "Workspace Part",
+                Content = "No part named \"" .. WorkspacePartName .. "\" was found in Workspace.",
+                Duration = 3
+            })
+            return
+        end
+
+        local Character = LocalPlayer.Character
+        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+        if not Root then
+            Rayfield:Notify({
+                Title = "Workspace Part",
+                Content = "Your character is not loaded.",
+                Duration = 2
+            })
+            return
+        end
+
+        local TargetCFrame = TargetPart.CFrame + Vector3.new(0, 3, 0)
+        local Duration = math.clamp((Root.Position - TargetCFrame.Position).Magnitude / 75, 0.2, 1.2)
+
+        local Tween = TweenService:Create(
+            Root,
+            TweenInfo.new(Duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+            {CFrame = TargetCFrame}
+        )
+
+        Tween:Play()
+    end,
+})
+
 local function IsPlayerCharacter(Object)
     local Model = Object:FindFirstAncestorOfClass("Model")
     return Model and Players:GetPlayerFromCharacter(Model) ~= nil
@@ -1096,18 +1214,6 @@ local function GetPlayerNames()
     return Names
 end
 
-PlayerDropdown = OthersTab:CreateDropdown({
-    Name = "Select Player",
-    Options = GetPlayerNames(),
-    CurrentOption = {},
-    MultipleOptions = false,
-    Flag = "SelectedPlayer",
-
-    Callback = function(Option)
-        SelectedPlayer = Option[1]
-    end
-})
-
 local LastDeathCFrame = nil
 
 local function TrackDeathPosition(Character)
@@ -1159,6 +1265,58 @@ OthersTab:CreateButton({
         Root.CFrame = LastDeathCFrame + Vector3.new(0, 3, 0)
     end
 })
+
+OthersTab:CreateButton({
+    Name = "Tween to Last Death",
+    Callback = function()
+        if not LastDeathCFrame then
+            Rayfield:Notify({
+                Title = "Last Death",
+                Content = "No death location has been recorded yet.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Character = LocalPlayer.Character
+        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+        if not Root then
+            Rayfield:Notify({
+                Title = "Last Death",
+                Content = "Your character is not loaded.",
+                Duration = 2
+            })
+            return
+        end
+
+        local TargetCFrame = LastDeathCFrame + Vector3.new(0, 3, 0)
+        local Distance = (Root.Position - TargetCFrame.Position).Magnitude
+        local Duration = math.clamp(Distance / 75, 0.2, 1.2)
+
+        local Tween = TweenService:Create(
+            Root,
+            TweenInfo.new(Duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+            {CFrame = TargetCFrame}
+        )
+
+        Tween:Play()
+    end
+})
+
+PlayerDropdown = OthersTab:CreateDropdown({
+    Name = "Select Player",
+    Options = GetPlayerNames(),
+    CurrentOption = {},
+    MultipleOptions = false,
+    Flag = "SelectedPlayer",
+
+    Callback = function(Option)
+        SelectedPlayer = Option[1]
+    end
+})
+
+
 
 local function StopSpectating()
     if not SpectatingPlayer then
@@ -2134,7 +2292,48 @@ LocalPlayer.CharacterAdded:Connect(function(character)
             humanoid.JumpHeight = CurrentJump
         end
     end
+
+    if HipHeightEnabled then
+        if OriginalHipHeight[humanoid] == nil then
+            OriginalHipHeight[humanoid] = humanoid.HipHeight
+        end
+        humanoid.HipHeight = CurrentHipHeight
+    end
+
+    if GravityEnabled then
+        Workspace.Gravity = CurrentGravity
+    end
 end)
+
+MovementTab:CreateToggle({
+    Name = "Gravity",
+    CurrentValue = false,
+    Flag = "GravityToggle",
+    Callback = function(Value)
+        GravityEnabled = Value
+
+        if Value then
+            Workspace.Gravity = CurrentGravity
+        else
+            Workspace.Gravity = DefaultGravity
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Gravity Value",
+    Range = {0, 500},
+    Increment = 1,
+    CurrentValue = 196.2,
+    Flag = "GravityValue",
+    Callback = function(Value)
+        CurrentGravity = Value
+
+        if GravityEnabled then
+            Workspace.Gravity = CurrentGravity
+        end
+    end
+})
 
 MovementTab:CreateToggle({
     Name = "Speed Hack",
@@ -2388,6 +2587,46 @@ MovementTab:CreateToggle({
     end,
 })
 
+MovementTab:CreateToggle({
+    Name = "Hip Height",
+    CurrentValue = false,
+    Flag = "HipHeightToggle",
+    Callback = function(Value)
+        HipHeightEnabled = Value
+
+        if Value then
+            local Humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if Humanoid then
+                if OriginalHipHeight[Humanoid] == nil then
+                    OriginalHipHeight[Humanoid] = Humanoid.HipHeight
+                end
+                Humanoid.HipHeight = CurrentHipHeight
+            end
+        else
+            local Humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if Humanoid and OriginalHipHeight[Humanoid] then
+                Humanoid.HipHeight = OriginalHipHeight[Humanoid]
+                OriginalHipHeight[Humanoid] = nil
+            end
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Hip Height Value",
+    Range = {0, 25},
+    Increment = 0.1,
+    CurrentValue = 0,
+    Flag = "HipHeightValue",
+    Callback = function(Value)
+        CurrentHipHeight = Value
+        local Humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if HipHeightEnabled and Humanoid then
+            Humanoid.HipHeight = CurrentHipHeight
+        end
+    end
+})
+
 MovementTab:CreateButton({
     Name = "Sit",
     Callback = function()
@@ -2415,7 +2654,7 @@ SettingsTab:CreateButton({
 SettingsTab:CreateButton({
    Name = "Rejoin",
    Callback = function()
-game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId,game.JobId)
+        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId)
    end,
 })
 
@@ -2614,7 +2853,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.1.8"
+    Content = "1.1.9"
 })
 local function NotifyExecutorCapabilities()
     local Missing = {}
@@ -2647,11 +2886,11 @@ end
 NotifyExecutorCapabilities()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.1.8 loaded successfully!",
+    Content = "Version 1.1.9 loaded successfully!",
     Duration = 3,
     Image = nil
 })
 
 print("If your your having issues with MOUSED with something then it's prob your executor so use something like madium.")
 task.wait(3)
-print("Make sure that your using the official MOUSED.")
+print("Make sure that your using the official MOUSED (yes this is the official).")
