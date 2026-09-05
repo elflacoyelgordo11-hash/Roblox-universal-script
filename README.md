@@ -1,6 +1,6 @@
 # Roblox-universal-script
 This is a universal script (meaning it works on every game) and i will update if theres a bug, if i want to add smth else, or if something just not working.
-# Changelogs Version 1.2.0
-All i added was Welder and other custom welder animations (They have a delay idk how to fix.) and mobile support to other features like infinite jump.
+# Changelogs Version 1.2.1
+Im lazy to type it all but made weld better, improved some stuff on mobile (if correct,) and more.
 # Notes
 If you want to execute MOUSED with the latest update/version then use Loadstring. Universal Script is for the Open Source Code. And also i might not update MOUSED alot for a long time because i started school so yeah.
