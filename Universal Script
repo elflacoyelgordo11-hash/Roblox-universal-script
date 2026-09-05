@@ -48,6 +48,11 @@ local FlySpeed = 50
 local FlyConnection = nil
 local FlyBodyVelocity = nil
 local FlyBodyGyro = nil
+local VehicleFlyEnabled = false
+local VehicleFlyConnection = nil
+local VehicleFlyBodyVelocity = nil
+local VehicleFlyBodyGyro = nil
+local VehicleFlySpeed = 80
 local GravityEnabled = false
 local CurrentGravity = Workspace.Gravity
 local DefaultGravity = Workspace.Gravity
@@ -101,23 +106,73 @@ local WeldCopyVelocity = true
 local OriginalFPDH = Workspace.FallenPartsDestroyHeight
 local WeldOffsetX = 0
 local WeldOffsetY = 0
-local WeldOffsetZ = 1.3
+local WeldOffsetZ = 0
 local CarpetAnimID = 282574440
 local BackpackAnimID = 178130996
 local AttackAnimID = 259438880
 local HeadSitAnimID = 178130996
+local BangAnimID = 148840371
 local AnimTrack = nil
+local LastTouchPosition = Vector2.new(0, 0)
+
+local function IsMobileInput()
+    return UserInputService and UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+end
+
+local function GetMobileFlyInput()
+    local viewportSize = Camera and Camera.ViewportSize or Vector2.new(1920, 1080)
+    local center = viewportSize / 2
+    local delta = (LastTouchPosition - center) / Vector2.new(math.max(center.X, 1), math.max(center.Y, 1))
+
+    return {
+        X = math.clamp(delta.X * 2, -1, 1),
+        Y = math.clamp(delta.Y * 2, -1, 1)
+    }
+end
+
+UserInputService.InputChanged:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Touch then
+        LastTouchPosition = input.Position
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Touch then
+        LastTouchPosition = input.Position
+    end
+end)
 
 local function GetTargetRoot(character)
     if not character then return nil end
+
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return nil end
-    
-    if humanoid.RigType == Enum.HumanoidRigType.R15 then
-        return character:FindFirstChild("UpperTorso") or character:FindFirstChild("HumanoidRootPart")
-    else
-        return character:FindFirstChild("Torso") or character:FindFirstChild("HumanoidRootPart")
+    if humanoid and humanoid.RootPart then
+        return humanoid.RootPart
     end
+
+    local candidateNames = {
+        "HumanoidRootPart",
+        "UpperTorso",
+        "Torso",
+        "RootPart",
+        "LowerTorso",
+        "Head"
+    }
+
+    for _, name in ipairs(candidateNames) do
+        local part = character:FindFirstChild(name)
+        if part then
+            return part
+        end
+    end
+
+    if humanoid then
+        return character:FindFirstChildOfClass("BasePart")
+    end
+
+    return nil
 end
 
 local function WeldTo(TargetPart, Offset, Speaker, AnimId)
@@ -128,14 +183,9 @@ local function WeldTo(TargetPart, Offset, Speaker, AnimId)
     local Root = Character:FindFirstChild("HumanoidRootPart") or (Humanoid and Humanoid.RootPart)
 
     if not Root or not Humanoid then return nil end
-
-    if AnimTrack then
-        AnimTrack:Stop()
-        AnimTrack:Destroy()
-        AnimTrack = nil
-    end
-
-    if AnimId and tonumber(AnimId) and tonumber(AnimId) > 0 then
+    
+    local AnimTrack = nil
+    if AnimId and tostring(AnimId) ~= "0" then
         local Animator = Character:FindFirstChildWhichIsA("Animator", true)
         if Animator then
             local Animation = Instance.new("Animation")
@@ -169,22 +219,87 @@ local function WeldTo(TargetPart, Offset, Speaker, AnimId)
             Root.AssemblyLinearVelocity = TargetPart.AssemblyLinearVelocity
             Root.AssemblyAngularVelocity = TargetPart.AssemblyAngularVelocity
         end
+        
+        if sethiddenproperty then
+            pcall(function()
+                sethiddenproperty(Root, "PhysicsRepRootPart", TargetPart)
+            end)
+        end
     end)
 
     function Weld:Destroy()
         if Connection then Connection:Disconnect() end
-        if AnimTrack then
-            AnimTrack:Stop()
-            AnimTrack:Destroy()
-            AnimTrack = nil
-        end
+        if AnimTrack then AnimTrack:Stop(); AnimTrack:Destroy() end
         
         if Root then
             Root.AssemblyLinearVelocity = Vector3.zero
             Root.AssemblyAngularVelocity = Vector3.zero
         end
+    end
+
+    return Weld
+end
+
+local function JustWeld(FakePart, Offset, Speaker, AnimationId)
+    local Character = Speaker.Character
+    if not Character then return nil end
+
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local Root = Character:FindFirstChild("HumanoidRootPart") or (Humanoid and Humanoid.RootPart)
+
+    if not Root or not Humanoid then return nil end
+
+    local AnimTrack = nil
+    if AnimationId and tostring(AnimationId) ~= "0" then
+        local Animator = Character:FindFirstChildWhichIsA("Animator", true)
+        if Animator then
+            local Animation = Instance.new("Animation")
+            Animation.AnimationId = "rbxassetid://" .. tostring(AnimationId)
+            pcall(function()
+                AnimTrack = Animator:LoadAnimation(Animation)
+                if AnimTrack then AnimTrack:Play() end
+            end)
+        end
+    end
+
+    local Weld = {}
+    local Connection = nil
+
+    for _, v in pairs(Character:GetDescendants()) do
+        if v:IsA("BasePart") then
+            v.CanCollide = false
+            v.Massless = true
+        end
+    end
+
+    Connection = RunService.Heartbeat:Connect(function()
+        if not Character.Parent or not FakePart.Parent then
+            if Weld.Destroy then Weld:Destroy() end
+            return
+        end
+
+        Root.CFrame = FakePart.CFrame * Offset
         
-        Workspace.FallenPartsDestroyHeight = OriginalFPDH
+        if WeldCopyVelocity then
+            Root.AssemblyLinearVelocity = FakePart.AssemblyLinearVelocity
+            Root.AssemblyAngularVelocity = FakePart.AssemblyAngularVelocity
+        end
+
+        if sethiddenproperty then
+            pcall(function()
+                sethiddenproperty(Root, "PhysicsRepRootPart", FakePart)
+            end)
+        end
+    end)
+
+    function Weld:Destroy()
+        if Connection then Connection:Disconnect() end
+        if AnimTrack then AnimTrack:Stop(); AnimTrack:Destroy() end
+        
+        if Root then
+            Root.AssemblyLinearVelocity = Vector3.zero
+            Root.AssemblyAngularVelocity = Vector3.zero
+        end
     end
 
     return Weld
@@ -1634,6 +1749,54 @@ OthersTab:CreateButton({
 })
 
 OthersTab:CreateButton({
+    Name = "Front Lean",
+    Callback = function()
+        if not SelectedPlayer then
+            Rayfield:Notify({
+                Title = "Welder",
+                Content = "Select a player first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Target = Players:FindFirstChild(SelectedPlayer)
+        if not Target or not Target.Character then return end
+
+        local TRoot = GetTargetRoot(Target.Character)
+        if not TRoot then return end
+
+        if CurrentWeld then CurrentWeld:Destroy() end
+        Workspace.FallenPartsDestroyHeight = 0/0
+        CurrentWeld = WeldTo(TRoot, CFrame.new(0, 0.5, 2.2) * CFrame.Angles(math.rad(90), 0, 0), LocalPlayer, nil)
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Bang",
+    Callback = function()
+        if not SelectedPlayer then
+            Rayfield:Notify({
+                Title = "Welder",
+                Content = "Select a player first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Target = Players:FindFirstChild(SelectedPlayer)
+        if not Target or not Target.Character then return end
+
+        local TRoot = GetTargetRoot(Target.Character)
+        if not TRoot then return end
+
+        if CurrentWeld then CurrentWeld:Destroy() end
+        Workspace.FallenPartsDestroyHeight = 0/0
+        CurrentWeld = WeldTo(TRoot, CFrame.new(0, 0, 1.3), LocalPlayer, BangAnimID)
+    end,
+})
+
+OthersTab:CreateButton({
     Name = "Unweld",
     Callback = function()
         UnweldAll()
@@ -2619,6 +2782,107 @@ local function StartFly()
             + Vector3.new(0, Vertical * FlySpeed, 0)
     end)
 end
+
+local function StopVehicleFly()
+    if VehicleFlyConnection then
+        VehicleFlyConnection:Disconnect()
+        VehicleFlyConnection = nil
+    end
+
+    if VehicleFlyBodyVelocity then
+        VehicleFlyBodyVelocity:Destroy()
+        VehicleFlyBodyVelocity = nil
+    end
+
+    if VehicleFlyBodyGyro then
+        VehicleFlyBodyGyro:Destroy()
+        VehicleFlyBodyGyro = nil
+    end
+end
+
+local function StartVehicleFly()
+    StopVehicleFly()
+
+    VehicleFlyConnection = RunService.Heartbeat:Connect(function()
+        local Character = LocalPlayer.Character
+        local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+        local Seat = Humanoid and Humanoid.SeatPart
+        local VehicleRoot = Seat and Seat:IsA("VehicleSeat") and Seat.AssemblyRootPart
+
+        if not VehicleRoot then
+            if VehicleFlyBodyVelocity then
+                VehicleFlyBodyVelocity:Destroy()
+                VehicleFlyBodyVelocity = nil
+            end
+            if VehicleFlyBodyGyro then
+                VehicleFlyBodyGyro:Destroy()
+                VehicleFlyBodyGyro = nil
+            end
+            return
+        end
+
+        if not VehicleFlyBodyVelocity or VehicleFlyBodyVelocity.Parent ~= VehicleRoot then
+            if VehicleFlyBodyVelocity then
+                VehicleFlyBodyVelocity:Destroy()
+            end
+
+            VehicleFlyBodyVelocity = Instance.new("BodyVelocity")
+            VehicleFlyBodyVelocity.Name = "MOUSED_VehicleFlyVelocity"
+            VehicleFlyBodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+            VehicleFlyBodyVelocity.P = 5000
+            VehicleFlyBodyVelocity.Parent = VehicleRoot
+        end
+
+        if not VehicleFlyBodyGyro or VehicleFlyBodyGyro.Parent ~= VehicleRoot then
+            if VehicleFlyBodyGyro then
+                VehicleFlyBodyGyro:Destroy()
+            end
+
+            VehicleFlyBodyGyro = Instance.new("BodyGyro")
+            VehicleFlyBodyGyro.Name = "MOUSED_VehicleFlyGyro"
+            VehicleFlyBodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+            VehicleFlyBodyGyro.P = 5000
+            VehicleFlyBodyGyro.Parent = VehicleRoot
+        end
+
+        local CameraCFrame = Camera.CFrame
+        local Forward = Vector3.new(CameraCFrame.LookVector.X, 0, CameraCFrame.LookVector.Z)
+        local Right = Vector3.new(CameraCFrame.RightVector.X, 0, CameraCFrame.RightVector.Z)
+        local Horizontal = Vector3.zero
+        local Vertical = 0
+
+        if Forward.Magnitude > 0 then
+            Forward = Forward.Unit
+            VehicleFlyBodyGyro.CFrame = CFrame.lookAt(
+                VehicleRoot.Position,
+                VehicleRoot.Position + Forward
+            )
+        end
+        if Right.Magnitude > 0 then
+            Right = Right.Unit
+        end
+
+        if IsMobileInput() then
+            local TouchInput = GetMobileFlyInput()
+            Horizontal = (Forward * (-TouchInput.Y)) + (Right * TouchInput.X)
+            Vertical = math.clamp(TouchInput.Y * 2, -1, 1)
+        else
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then Horizontal += Forward end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then Horizontal -= Forward end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then Horizontal += Right end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then Horizontal -= Right end
+            if UserInputService:IsKeyDown(Enum.KeyCode.E) then Vertical += 1 end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Q) then Vertical -= 1 end
+        end
+
+        if Horizontal.Magnitude > 1 then
+            Horizontal = Horizontal.Unit
+        end
+
+        VehicleFlyBodyVelocity.Velocity = Horizontal * VehicleFlySpeed
+            + Vector3.new(0, Vertical * VehicleFlySpeed, 0)
+    end)
+end
 -- Reapply after respawn
 LocalPlayer.CharacterAdded:Connect(function(character)
     if FlyEnabled then
@@ -2751,6 +3015,32 @@ MovementTab:CreateSlider({
     Flag = "UniversalFlySpeed",
     Callback = function(Value)
         FlySpeed = Value
+    end
+})
+
+MovementTab:CreateToggle({
+    Name = "Vehicle Fly",
+    CurrentValue = false,
+    Flag = "VehicleFly",
+    Callback = function(Value)
+        VehicleFlyEnabled = Value
+
+        if Value then
+            StartVehicleFly()
+        else
+            StopVehicleFly()
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Vehicle Fly Speed",
+    Range = {1, 300},
+    Increment = 1,
+    CurrentValue = VehicleFlySpeed,
+    Flag = "VehicleFlySpeed",
+    Callback = function(Value)
+        VehicleFlySpeed = Value
     end
 })
 
@@ -3203,8 +3493,67 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.2.0"
+    Content = "1.2.1"
 })
+local function NotifyWelderCompatibility()
+    local Missing = {}
+    local Warnings = {}
+
+    local MobileMode = UserInputService and (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
+
+    if not RunService or not RunService.Heartbeat then
+        table.insert(Missing, "RunService.Heartbeat")
+    end
+    if not Players or not Players.LocalPlayer then
+        table.insert(Missing, "LocalPlayer")
+    end
+    if not sethiddenproperty then
+        table.insert(Missing, "sethiddenproperty")
+    end
+
+    local Character = Players and Players.LocalPlayer and Players.LocalPlayer.Character
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+    local Root = Character and (
+        Character:FindFirstChild("HumanoidRootPart")
+        or Character:FindFirstChild("RootPart")
+        or Character:FindFirstChild("Torso")
+        or Character:FindFirstChild("UpperTorso")
+        or Character:FindFirstChild("LowerTorso")
+        or Character:FindFirstChild("Head")
+    )
+
+    if not Character then
+        table.insert(Missing, "Character")
+    end
+    if not Humanoid then
+        table.insert(Missing, "Humanoid")
+    end
+    if not Root then
+        table.insert(Missing, "Rig Root")
+    end
+    if Character and not Character:FindFirstChildWhichIsA("Animator", true) then
+        table.insert(Warnings, "Animator missing")
+    end
+    if MobileMode then
+        table.insert(Warnings, "Mobile mode: some keyboard-only features may be limited")
+    end
+
+    local Content = ""
+    if #Missing > 0 then
+        Content = "Missing: " .. table.concat(Missing, ", ") .. ". Some weld features may fail."
+    elseif #Warnings > 0 then
+        Content = "Compatible with current rig. " .. table.concat(Warnings, "; ") .. "."
+    else
+        Content = "Compatible with current rig and executor support."
+    end
+
+    Rayfield:Notify({
+        Title = "Welder Compatibility",
+        Content = Content,
+        Duration = 6
+    })
+end
+
 local function NotifyExecutorCapabilities()
     local Missing = {}
 
@@ -3234,13 +3583,14 @@ local function NotifyExecutorCapabilities()
 end
 -- Show success notification
 NotifyExecutorCapabilities()
+NotifyWelderCompatibility()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.2.0 loaded successfully!",
+    Content = "Version 1.2.1 loaded successfully!",
     Duration = 3,
     Image = nil
 })
 
 print("If your your having issues with MOUSED with something then it's prob your executor so use something like madium.")
 task.wait(3)
-print("Make sure that your using the official MOUSED.")
+print("Make sure that your using the official MOUSED (Yes this is the official MOUSED).")
