@@ -107,60 +107,13 @@ local BackpackAnimID = 178130996
 local AttackAnimID = 259438880
 local HeadSitAnimID = 178130996
 local BangAnimID = 148840371
+local FrontSitAnimID = HeadSitAnimID
+local RideAnimID = BackpackAnimID
 local AnimTrack = nil
-local LastTouchPosition = Vector2.new(0, 0)
-local MobileTouchStart = Vector2.new(0, 0)
-local MobileTouchHeld = false
 
 local function IsMobileInput()
     return UserInputService and UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 end
-
-local function GetMobileFlyInput()
-    local viewportSize = Camera and Camera.ViewportSize or Vector2.new(1920, 1080)
-    local deadZone = Vector2.new(
-        math.max(viewportSize.X * 0.22, 1),
-        math.max(viewportSize.Y * 0.22, 1)
-    )
-
-    local delta = MobileTouchHeld and (LastTouchPosition - MobileTouchStart) or Vector2.zero
-    local x = math.clamp(delta.X / deadZone.X, -1, 1)
-    local y = math.clamp((-delta.Y) / deadZone.Y, -1, 1)
-
-    return {
-        X = x,
-        Y = y
-    }
-end
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.Touch then
-        MobileTouchStart = input.Position
-        LastTouchPosition = input.Position
-        MobileTouchHeld = true
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.Touch then
-        LastTouchPosition = input.Position
-        if not MobileTouchHeld then
-            MobileTouchStart = input.Position
-            MobileTouchHeld = true
-        end
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.Touch then
-        MobileTouchHeld = false
-        LastTouchPosition = input.Position
-        MobileTouchStart = input.Position
-    end
-end)
 
 local function GetTargetRoot(character)
     if not character then return nil end
@@ -1998,6 +1951,111 @@ OthersTab:CreateButton({
 })
 
 OthersTab:CreateButton({
+    Name = "Back Lean",
+    Callback = function()
+        if not SelectedPlayer then
+            Rayfield:Notify({
+                Title = "Welder",
+                Content = "Select a player first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Target = Players:FindFirstChild(SelectedPlayer)
+        if not Target or not Target.Character then return end
+
+        local TRoot = GetTargetRoot(Target.Character)
+        if not TRoot then return end
+
+        if CurrentWeld then CurrentWeld:Destroy() end
+        Workspace.FallenPartsDestroyHeight = 0/0
+        CurrentWeld = WeldTo(TRoot, CFrame.new(0, 0.5, -2.2) * CFrame.Angles(math.rad(-90), 0, math.rad(180)), LocalPlayer, nil)
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Side Lean",
+    Callback = function()
+        if not SelectedPlayer then
+            Rayfield:Notify({
+                Title = "Welder",
+                Content = "Select a player first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Target = Players:FindFirstChild(SelectedPlayer)
+        if not Target or not Target.Character then return end
+
+        local TRoot = GetTargetRoot(Target.Character)
+        if not TRoot then return end
+
+        if CurrentWeld then CurrentWeld:Destroy() end
+        Workspace.FallenPartsDestroyHeight = 0/0
+        CurrentWeld = WeldTo(TRoot, CFrame.new(2.1, 0.5, 0) * CFrame.Angles(0, math.rad(90), math.rad(90)), LocalPlayer, nil)
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Front Sit",
+    Callback = function()
+        if not SelectedPlayer then
+            Rayfield:Notify({
+                Title = "Welder",
+                Content = "Select a player first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Target = Players:FindFirstChild(SelectedPlayer)
+        if not Target or not Target.Character then return end
+
+        local TRoot = GetTargetRoot(Target.Character)
+        if not TRoot then return end
+
+        if CurrentWeld then CurrentWeld:Destroy() end
+        Workspace.FallenPartsDestroyHeight = 0/0
+        CurrentWeld = WeldTo(TRoot, CFrame.new(0, -0.2, -1.8) * CFrame.Angles(math.rad(90), 0, math.rad(180)), LocalPlayer, FrontSitAnimID)
+    end,
+})
+
+OthersTab:CreateButton({
+    Name = "Shoulder Ride",
+    Callback = function()
+        if not SelectedPlayer then
+            Rayfield:Notify({
+                Title = "Welder",
+                Content = "Select a player first.",
+                Duration = 2
+            })
+            return
+        end
+
+        local Target = Players:FindFirstChild(SelectedPlayer)
+        if not Target or not Target.Character then return end
+
+        local TRoot = GetTargetRoot(Target.Character)
+        if not TRoot then return end
+
+        if CurrentWeld then CurrentWeld:Destroy() end
+        Workspace.FallenPartsDestroyHeight = 0/0
+
+        local TargetHumanoid = Target.Character:FindFirstChildOfClass("Humanoid")
+        local ShoulderOffset
+        if TargetHumanoid and TargetHumanoid.RigType == Enum.HumanoidRigType.R15 then
+            ShoulderOffset = CFrame.new(1.35, 1.15, 0)
+        else
+            ShoulderOffset = CFrame.new(1.25, 1, 0)
+        end
+
+        CurrentWeld = WeldTo(TRoot, ShoulderOffset, LocalPlayer, RideAnimID)
+    end,
+})
+
+OthersTab:CreateButton({
     Name = "Bang",
     Callback = function()
         if not SelectedPlayer then
@@ -2971,12 +3029,13 @@ local function StartFly()
         end
 
         if IsMobileInput() then
-            local touchInput = GetMobileFlyInput()
-            local moveX = touchInput.X
-            local moveY = touchInput.Y
+            local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+            local MoveDirection = Humanoid and Humanoid.MoveDirection or Vector3.zero
 
-            Horizontal = (Forward * moveY) + (Right * moveX)
-            Vertical = math.clamp(moveY, -1, 1)
+            Horizontal = MoveDirection
+            if Humanoid and Humanoid.Jump then
+                Vertical = 1
+            end
         else
             if UserInputService:IsKeyDown(Enum.KeyCode.W) then
                 Horizontal += Forward
@@ -3161,40 +3220,14 @@ MovementTab:CreateToggle({
 
         local Player = Players.LocalPlayer
         local UIS = UserInputService
-        local IsTouchDevice = UIS.TouchEnabled and not UIS.KeyboardEnabled
-
-        if IsTouchDevice then
-            JumpConnection = RunService.Heartbeat:Connect(function()
-                local Character = Player.Character
-                if not Character then return end
-
-                local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-                if not Humanoid then return end
-
-                if Humanoid:GetState() == Enum.HumanoidStateType.Landed then
-                    Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                end
-            end)
-            return
-        end
-
-        JumpConnection = UIS.InputBegan:Connect(function(UserInput, GameProcessed)
-            if GameProcessed then return end
-
-            local isKeyboardJump = UserInput.UserInputType == Enum.UserInputType.Keyboard
-                and UserInput.KeyCode == Enum.KeyCode.Space
-
-            if not isKeyboardJump then
-                return
-            end
-
+        JumpConnection = UIS.JumpRequest:Connect(function()
             local Character = Player.Character
             if not Character then return end
 
             local Humanoid = Character:FindFirstChildOfClass("Humanoid")
             if not Humanoid then return end
 
-            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            Humanoid.Jump = true
         end)
     end,
 })
@@ -3430,6 +3463,33 @@ SettingsTab:CreateButton({
     end,
 })
 
+SettingsTab:CreateButton({
+    Name = "UNC Test",
+    Callback = function()
+        loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-UNC-TEST-136099"))()
+    end,
+})
+
+SettingsTab:CreateButton({
+    Name = "Executor level checker",
+    Callback = function()
+        local ExecutorName = identifyexecutor and identifyexecutor() or "Unknown executor"
+
+        if printidentity then
+            printidentity("Based On " .. ExecutorName .. ". Your executor level is")
+        else
+            print("Based On " .. ExecutorName .. ". Executor identity API unavailable.")
+        end
+    end,
+})
+
+SettingsTab:CreateButton({
+    Name = "Disable Game Pause",
+    Callback = function()
+        game:GetService("GuiService"):SetGameplayPausedNotificationEnabled(false)
+    end,
+})
+
 SettingsTab:CreateToggle({
     Name = "Disable 3D Rendering",
     CurrentValue = false,
@@ -3571,7 +3631,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.2.2"
+    Content = "1.2.3"
 })
 local function NotifyWelderCompatibility()
     local Missing = {}
@@ -3664,7 +3724,7 @@ NotifyExecutorCapabilities()
 NotifyWelderCompatibility()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.2.2 loaded successfully!",
+    Content = "Version 1.2.3 loaded successfully!",
     Duration = 3,
     Image = nil
 })
