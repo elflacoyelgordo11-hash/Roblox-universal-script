@@ -35,6 +35,9 @@ local SpeedEnabled = false
 local JumpEnabled = false
 local InfiniteJump = false
 local JumpConnection
+local JumpInputBeganConnection
+local JumpInputEndedConnection
+local JumpInputHeld = false
 local JumpHeight = 50
 local SpeedLoop = false
 local JumpLoop = false
@@ -95,6 +98,7 @@ local PlayerDropdown
 local AimPart = "Head"
 local InstantPromptsEnabled = false
 local PromptAddedConnection
+local InfiniteZoom = false
 -- Welder
 local CurrentWeld = nil
 local WeldCopyVelocity = true
@@ -1003,6 +1007,21 @@ OthersTab:CreateToggle({
             end)
         end
     end
+})
+
+OthersTab:CreateToggle({
+    Name = "Infinite Zoom",
+    CurrentValue = false,
+    Flag = "InfiniteZoom",
+    Callback = function(Value)
+        InfiniteZoom = Value
+
+        if Value then
+            LocalPlayer.CameraMaxZoomDistance = math.huge
+        else
+            LocalPlayer.CameraMaxZoomDistance = 128
+        end
+    end,
 })
 
 OthersTab:CreateButton({
@@ -3206,33 +3225,73 @@ MovementTab:CreateToggle({
     Name = "Infinite Jump",
     CurrentValue = false,
     Flag = "InfiniteJump",
+
     Callback = function(Value)
         InfiniteJump = Value
+        JumpInputHeld = false
 
         if JumpConnection then
             JumpConnection:Disconnect()
             JumpConnection = nil
         end
 
+        if JumpInputBeganConnection then
+            JumpInputBeganConnection:Disconnect()
+            JumpInputBeganConnection = nil
+        end
+
+        if JumpInputEndedConnection then
+            JumpInputEndedConnection:Disconnect()
+            JumpInputEndedConnection = nil
+        end
+
         if not InfiniteJump then
             return
         end
 
-        local Player = Players.LocalPlayer
-        local UIS = UserInputService
-        JumpConnection = UIS.JumpRequest:Connect(function()
-            local Character = Player.Character
-            if not Character then return end
+        local function DoInfiniteJump()
+            if not InfiniteJump or JumpInputHeld then
+                return
+            end
 
-            local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-            if not Humanoid then return end
+            local Character = LocalPlayer.Character
+            local Humanoid = Character
+                and Character:FindFirstChildOfClass("Humanoid")
 
-            Humanoid.Jump = true
+            if Humanoid and Humanoid.Health > 0 then
+                JumpInputHeld = true
+                Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                Humanoid.Jump = true
+            end
+        end
+
+        JumpInputBeganConnection = UserInputService.InputBegan:Connect(function(Input, GameProcessed)
+            if GameProcessed then
+                return
+            end
+
+            if Input.KeyCode == Enum.KeyCode.Space
+                or Input.KeyCode == Enum.KeyCode.ButtonA then
+                DoInfiniteJump()
+            end
+        end)
+
+        JumpInputEndedConnection = UserInputService.InputEnded:Connect(function(Input)
+            if Input.KeyCode == Enum.KeyCode.Space
+                or Input.KeyCode == Enum.KeyCode.ButtonA
+                or Input.UserInputType == Enum.UserInputType.Touch then
+                JumpInputHeld = false
+            end
+        end)
+
+        -- Supports mobile jump input while preventing repeated jumps while held.
+        JumpConnection = UserInputService.JumpRequest:Connect(function()
+            if IsMobileInput() then
+                DoInfiniteJump()
+            end
         end)
     end,
 })
-
-local Connection
 
 MovementTab:CreateToggle({
     Name = "Auto Jump",
@@ -3631,7 +3690,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.2.3"
+    Content = "1.2.4"
 })
 local function NotifyWelderCompatibility()
     local Missing = {}
@@ -3724,7 +3783,7 @@ NotifyExecutorCapabilities()
 NotifyWelderCompatibility()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.2.3 loaded successfully!",
+    Content = "Version 1.2.4 loaded successfully!",
     Duration = 3,
     Image = nil
 })
