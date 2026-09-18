@@ -99,6 +99,10 @@ local AimPart = "Head"
 local InstantPromptsEnabled = false
 local PromptAddedConnection
 local InfiniteZoom = false
+local AntiTouchEnabled = false
+local AntiTouchCharacterConnection
+local AntiTouchDescendantConnection
+local AntiTouchLoop
 -- Welder
 local CurrentWeld = nil
 local WeldCopyVelocity = true
@@ -287,7 +291,16 @@ local function UnweldAll()
     end
     Workspace.FallenPartsDestroyHeight = OriginalFPDH
 end
+--AntiTouch
+local function ApplyAntiTouch(Character)
+    if not Character then return end
 
+for _, Part in ipairs(Character:GetDescendants()) do
+        if Part:IsA("BasePart") then
+            Part.CanTouch = not AntiTouchEnabled
+        end
+    end
+end
 -- Cursor thing
 local function CreateCustomCursor()
     local cursor
@@ -861,6 +874,51 @@ loadstring(game:HttpGet("https://pastefy.app/wa3v2Vgm/raw"))()
 })
 
 FunTab:CreateButton({
+    Name = "Self Fling",
+    Callback = function()
+        local Character = LocalPlayer.Character
+        local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+        local RootPart = Humanoid and Humanoid.RootPart
+
+        if not RootPart then return end
+
+        if RootPart.Velocity.Magnitude <= 20 then
+            RootPart.Velocity =
+                (RootPart.Velocity + Vector3.new(0, 25, 0))
+                + (RootPart.CFrame.LookVector * 50)
+
+            RootPart.RotVelocity =
+                RootPart.RotVelocity
+                + Vector3.new(
+                    math.random(100, 250),
+                    math.random(-100, 150),
+                    math.random(100, 150)
+                )
+        end
+    end
+})
+
+FunTab:CreateButton({
+    Name = "Self Throw",
+    Callback = function()
+        local Character = LocalPlayer.Character
+        local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+        local RootPart = Humanoid and Humanoid.RootPart
+        local Camera = workspace.CurrentCamera
+
+        if not RootPart or not Camera then return end
+
+        if RootPart.Velocity.Magnitude <= 20 then
+            RootPart.Velocity =
+                (RootPart.Velocity + Vector3.new(0, 75, 0))
+                + (Camera.CFrame.LookVector * 100)
+
+            Humanoid:ChangeState(Enum.HumanoidStateType.FallingDown)
+        end
+    end
+})
+
+FunTab:CreateButton({
    Name = "Product Faker (I think doesnt work in delta and volcano.)",
    Callback = function()
   loadstring(game:HttpGet("https://pastefy.app/yVlxzwk8/raw"))()
@@ -971,6 +1029,64 @@ OthersTab:CreateToggle({
 
                 OriginalCanCollide[Part] = nil
             end
+        end
+    end
+})
+
+OthersTab:CreateToggle({
+    Name = "Anti Touch",
+    CurrentValue = false,
+    Flag = "AntiTouch",
+    Callback = function(Value)
+        AntiTouchEnabled = Value
+
+        if AntiTouchCharacterConnection then
+            AntiTouchCharacterConnection:Disconnect()
+            AntiTouchCharacterConnection = nil
+        end
+
+        if AntiTouchDescendantConnection then
+            AntiTouchDescendantConnection:Disconnect()
+            AntiTouchDescendantConnection = nil
+        end
+
+        if AntiTouchLoop then
+            task.cancel(AntiTouchLoop)
+            AntiTouchLoop = nil
+        end
+
+        if Value then
+            local Character = LocalPlayer.Character
+
+            if Character then
+                ApplyAntiTouch(Character)
+
+                AntiTouchDescendantConnection = Character.DescendantAdded:Connect(function(Object)
+                    if AntiTouchEnabled and Object:IsA("BasePart") then
+                        Object.CanTouch = false
+                    end
+                end)
+            end
+
+            AntiTouchCharacterConnection = LocalPlayer.CharacterAdded:Connect(function(NewCharacter)
+                task.wait()
+                ApplyAntiTouch(NewCharacter)
+
+                AntiTouchDescendantConnection = NewCharacter.DescendantAdded:Connect(function(Object)
+                    if AntiTouchEnabled and Object:IsA("BasePart") then
+                        Object.CanTouch = false
+                    end
+                end)
+            end)
+
+            AntiTouchLoop = task.spawn(function()
+                while AntiTouchEnabled do
+                    ApplyAntiTouch(LocalPlayer.Character)
+                    task.wait(0.5)
+                end
+            end)
+        else
+            ApplyAntiTouch(LocalPlayer.Character)
         end
     end
 })
@@ -2999,6 +3115,31 @@ local function StopFly()
     end
 end
 
+local function IsFlyKeyBlocked(KeyCode)
+    for _, Prompt in ipairs(workspace:GetDescendants()) do
+        if Prompt:IsA("ProximityPrompt")
+            and Prompt.Enabled
+            and Prompt.KeyboardKeyCode == KeyCode
+            and Prompt.MaxActivationDistance > 0 then
+
+            local Adornee = Prompt.Parent
+
+            if Adornee and Adornee:IsA("Attachment") then
+                Adornee = Adornee.Parent
+            end
+
+            if Adornee and Adornee:IsA("BasePart") then
+                local Root = GetCharacterRoot()
+                if Root and (Root.Position - Adornee.Position).Magnitude <= Prompt.MaxActivationDistance then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
 local function StartFly()
     StopFly()
 
@@ -3027,16 +3168,19 @@ local function StartFly()
         end
 
         local CameraCFrame = Camera.CFrame
+
         local Forward = Vector3.new(
             CameraCFrame.LookVector.X,
             0,
             CameraCFrame.LookVector.Z
         )
+
         local Right = Vector3.new(
             CameraCFrame.RightVector.X,
             0,
             CameraCFrame.RightVector.Z
         )
+
         local Horizontal = Vector3.zero
         local Vertical = 0
 
@@ -3052,6 +3196,7 @@ local function StartFly()
             local MoveDirection = Humanoid and Humanoid.MoveDirection or Vector3.zero
 
             Horizontal = MoveDirection
+
             if Humanoid and Humanoid.Jump then
                 Vertical = 1
             end
@@ -3059,20 +3204,27 @@ local function StartFly()
             if UserInputService:IsKeyDown(Enum.KeyCode.W) then
                 Horizontal += Forward
             end
+
             if UserInputService:IsKeyDown(Enum.KeyCode.S) then
                 Horizontal -= Forward
             end
+
             if UserInputService:IsKeyDown(Enum.KeyCode.D) then
                 Horizontal += Right
             end
+
             if UserInputService:IsKeyDown(Enum.KeyCode.A) then
                 Horizontal -= Right
             end
-
-            if UserInputService:IsKeyDown(Enum.KeyCode.E) then
+            -- E/Q only control Fly when they are NOT being used
+            -- by a nearby ProximityPrompt.
+            if UserInputService:IsKeyDown(Enum.KeyCode.E)
+                and not IsFlyKeyBlocked(Enum.KeyCode.E) then
                 Vertical += 1
             end
-            if UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+
+            if UserInputService:IsKeyDown(Enum.KeyCode.Q)
+                and not IsFlyKeyBlocked(Enum.KeyCode.Q) then
                 Vertical -= 1
             end
         end
@@ -3081,11 +3233,11 @@ local function StartFly()
             Horizontal = Horizontal.Unit
         end
 
-        FlyBodyVelocity.Velocity = Horizontal * FlySpeed
+        FlyBodyVelocity.Velocity =
+            Horizontal * FlySpeed
             + Vector3.new(0, Vertical * FlySpeed, 0)
     end)
 end
-
 -- Reapply after respawn
 LocalPlayer.CharacterAdded:Connect(function(character)
     if FlyEnabled then
@@ -3675,6 +3827,77 @@ SettingsTab:CreateToggle({
      })
 
 SettingsTab:CreateButton({
+    Name = "🚨 Panic Button",
+    Callback = function()
+        -- Disable movement features
+        SpeedEnabled = false
+        SpeedLoop = false
+        JumpEnabled = false
+        JumpLoop = false
+        InfiniteJump = false
+        GravityEnabled = false
+        HipHeightEnabled = false
+        NoclipEnabled = false
+        FlyEnabled = false
+
+        -- Stop active connections
+        if JumpConnection then
+            JumpConnection:Disconnect()
+            JumpConnection = nil
+        end
+
+        if JumpInputBeganConnection then
+            JumpInputBeganConnection:Disconnect()
+            JumpInputBeganConnection = nil
+        end
+
+        if JumpInputEndedConnection then
+            JumpInputEndedConnection:Disconnect()
+            JumpInputEndedConnection = nil
+        end
+
+        -- Stop Fly
+        StopFly()
+
+        -- Restore normal movement
+        RestoreMovement()
+
+        -- Restore gravity
+        Workspace.Gravity = DefaultGravity
+
+        -- Restore hip height
+        local Character = LocalPlayer.Character
+        local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+        if Humanoid and OriginalHipHeight[Humanoid] then
+            Humanoid.HipHeight = OriginalHipHeight[Humanoid]
+        end
+
+        -- Restore collisions
+        if Character then
+            for _, Part in ipairs(Character:GetDescendants()) do
+                if Part:IsA("BasePart") and OriginalNoclipCanCollide[Part] ~= nil then
+                    Part.CanCollide = OriginalNoclipCanCollide[Part]
+                end
+            end
+        end
+
+        -- Reset common movement values
+        if Humanoid then
+            Humanoid.WalkSpeed = 16
+            Humanoid.JumpPower = 50
+            Humanoid.JumpHeight = 7.2
+        end
+
+        Rayfield:Notify({
+            Title = "Panic Button",
+            Content = "Movement features disabled and character restored.",
+            Duration = 3
+        })
+    end
+})
+
+SettingsTab:CreateButton({
     Name = "Destroy UI",
     Callback = function()
         Rayfield:Destroy()
@@ -3690,7 +3913,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.2.4"
+    Content = "1.25"
 })
 local function NotifyWelderCompatibility()
     local Missing = {}
@@ -3783,7 +4006,7 @@ NotifyExecutorCapabilities()
 NotifyWelderCompatibility()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.2.4 loaded successfully!",
+    Content = "Version 1.2.5 loaded successfully!",
     Duration = 3,
     Image = nil
 })
