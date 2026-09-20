@@ -121,14 +121,12 @@ local BangAnimID = 148840371
 local FrontSitAnimID = HeadSitAnimID
 local RideAnimID = BackpackAnimID
 local AnimTrack = nil
-
--- Feather Falling (converted from the FeatherFalling Infinite Yield plugin)
+-- Feather Falling
 local Feather = {
     Connection = nil,
     Gravity = 20,   -- gravity used while feather falling
     FallSpeed = 1,  -- start slowing down once falling faster than this (studs/s)
 }
-
 -- The gravity to go back to when you're not falling (respects the Gravity toggle below)
 function Feather.Normal()
     return GravityEnabled and CurrentGravity or DefaultGravity
@@ -509,9 +507,7 @@ local function DisableCustomCursor()
         customCursor = nil
     end
 end
-
 -- ESP Functions
-
 local function CreateESP(Player, ObjectTable, Prefix)
     if Player == LocalPlayer or ObjectTable[Player] then
         return
@@ -1056,8 +1052,6 @@ FunTab:CreateButton({
   loadstring(game:HttpGet("https://pastefy.app/yVlxzwk8/raw"))()
    end,
 })
--- Uwuify (converted from the uwuify Infinite Yield plugin)
-FunTab:CreateSection("Uwuify Chat")
 
 do
     local TextChatService = game:GetService("TextChatService")
@@ -1065,8 +1059,7 @@ do
     local Rng = Random.new()
     local AutoToggle
     local Uwu = { Auto = false, Connection = nil, Ignore = {} }
-
-    -- Same substitutions, in the same order, as the original plugin
+    -- Same substitutions, in the same order
     local Rules = {
         { "r", "w" }, { "R", "W" },
         { "l", "w" }, { "L", "W" },
@@ -1091,7 +1084,6 @@ do
         for _, Rule in ipairs(Rules) do
             Result = string.gsub(Result, Rule[1], Rule[2])
         end
-
         -- Random stutter: "hello" -> "h-hello"
         local Chars = {}
         for i = 1, #Result do
@@ -1102,7 +1094,6 @@ do
             table.insert(Chars, Char)
         end
         local Body = table.concat(Chars)
-
         -- Keep the final message inside Roblox's 200 character chat limit
         local Affix = Affixes[Rng:NextInteger(1, #Affixes)]
         local MaxBody = 200 - (utf8.len(Affix) or #Affix)
@@ -1113,7 +1104,6 @@ do
 
         return Body .. Affix
     end
-
     -- Received chat text can come back rich-text escaped
     function Uwu.Unescape(Text)
         Text = string.gsub(Text, "&lt;", "<")
@@ -1125,15 +1115,34 @@ do
     end
 
     function Uwu.GetChannel()
-        if TextChatService.ChatVersion ~= Enum.ChatVersion.TextChatService then
+        local Channels = TextChatService:FindFirstChild("TextChannels")
+        if not Channels then
             return nil
         end
 
-        local Channels = TextChatService:FindFirstChild("TextChannels")
-        return Channels and Channels:FindFirstChild("RBXGeneral")
-    end
+        local General = Channels:FindFirstChild("RBXGeneral")
+        if General then
+            return General
+        end
+        -- Some games rename or remove RBXGeneral: use any channel we're a member of
+        for _, Channel in ipairs(Channels:GetChildren()) do
+            if Channel:IsA("TextChannel") and Channel:FindFirstChild(LocalPlayer.Name) then
+                return Channel
+            end
+        end
 
-    -- Sends to the General channel. Falls back to the legacy chat remote.
+        return nil
+    end
+    -- Shows why something failed instead of failing silently
+    function Uwu.Fail(Reason)
+        warn("[MOUSED] Uwuify: " .. tostring(Reason))
+        Rayfield:Notify({
+            Title = "Uwuify failed",
+            Content = tostring(Reason),
+            Duration = 6
+        })
+    end
+    -- Returns true, or false plus the reason it failed
     function Uwu.Send(Message)
         -- Remember messages we sent ourselves so auto mode doesn't uwuify them again
         local Tracked = Uwu.Auto
@@ -1141,28 +1150,48 @@ do
             table.insert(Uwu.Ignore, os.clock())
         end
 
+        local Reason = "no chat channel found in this game"
+
         local Channel = Uwu.GetChannel()
         if Channel then
-            local Ok = pcall(function()
+            local Ok, Err = pcall(function()
                 Channel:SendAsync(Message)
             end)
-            if not Ok and Tracked then
-                table.remove(Uwu.Ignore)
+            if Ok then
+                return true
             end
-            return Ok
+            Reason = "SendAsync error: " .. tostring(Err)
         end
-
+        -- Legacy chat fallback
         local Events = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
         local SayMessage = Events and Events:FindFirstChild("SayMessageRequest")
         if SayMessage then
-            SayMessage:FireServer(Message, "All")
-            return true
+            local Ok, Err = pcall(function()
+                SayMessage:FireServer(Message, "All")
+            end)
+            if Ok then
+                return true
+            end
+            Reason = "legacy chat error: " .. tostring(Err)
         end
 
         if Tracked then
             table.remove(Uwu.Ignore)
         end
-        return false
+        return false, Reason
+    end
+    -- Uwuifies and sends, reporting any failure
+    function Uwu.UwuifyAndSend(Text)
+        local Built, Message = pcall(Uwu.Transform, Text)
+        if not Built then
+            Uwu.Fail("couldn't uwuify that: " .. tostring(Message))
+            return
+        end
+
+        local Sent, Reason = Uwu.Send(Message)
+        if not Sent then
+            Uwu.Fail(Reason)
+        end
     end
 
     function Uwu.OnOwnMessage(Text)
@@ -1175,13 +1204,12 @@ do
             table.remove(Uwu.Ignore, 1)
             return
         end
-
         -- Don't touch empty messages or chat commands like /e dance
         if not Uwu.Auto or not Text:match("%S") or Text:sub(1, 1) == "/" then
             return
         end
 
-        Uwu.Send(Uwu.Transform(Text))
+        Uwu.UwuifyAndSend(Text)
     end
 
     function Uwu.SetAuto(State)
@@ -1228,13 +1256,7 @@ do
                 return
             end
 
-            if not Uwu.Send(Uwu.Transform(Text)) then
-                Rayfield:Notify({
-                    Title = "Uwuify",
-                    Content = "Couldn't find a chat channel to send to.",
-                    Duration = 3
-                })
-            end
+            Uwu.UwuifyAndSend(Text)
         end,
     })
 
@@ -1269,7 +1291,6 @@ do
         Uwu.SetAuto(false)
     end)
 end
-
 --Others
 OthersTab:CreateButton({
     Name = "Join Smallest Server",
@@ -1380,7 +1401,7 @@ OthersTab:CreateToggle({
 })
 
 OthersTab:CreateToggle({
-    Name = "Anti Touch",
+    Name = "Anti Touch Interests",
     CurrentValue = false,
     Flag = "AntiTouch",
     Callback = function(Value)
@@ -1484,6 +1505,13 @@ OthersTab:CreateToggle({
             LocalPlayer.CameraMaxZoomDistance = 128
         end
     end,
+})
+
+OthersTab:CreateButton({
+   Name = "Fire all Touch Interests",
+   Callback = function()
+   loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Fire-all-Touch-Interests-60782"))()
+   end,
 })
 
 OthersTab:CreateButton({
@@ -2987,7 +3015,6 @@ OthersTab:CreateSlider({
         SpinSpeed = Value
     end,
 })
-
 -- Visuals Tab Features
 VisualsTab:CreateToggle({
     Name = "Custom Cursor",
@@ -4001,6 +4028,267 @@ MovementTab:CreateSlider({
 })
 
 table.insert(ExtraCleanups, Feather.Stop)
+-- Fake Lag
+do
+    local FakeLag = { Enabled = false, Delay = 2, Id = 0 }
+
+    function FakeLag.Release()
+        local Character = LocalPlayer.Character
+        local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+        if Root then
+            Root.Anchored = false
+        end
+    end
+
+    function FakeLag.Start()
+        -- A new Id retires any loop that is still running, so loops never stack
+        FakeLag.Id = FakeLag.Id + 1
+        FakeLag.Enabled = true
+        local Id = FakeLag.Id
+
+        task.spawn(function()
+            while FakeLag.Enabled and FakeLag.Id == Id do
+                -- Look the root part up every cycle so respawning just works
+                local Character = LocalPlayer.Character
+                local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+                if Root then
+                    Root.Anchored = true
+                    task.wait(FakeLag.Delay)
+
+                    if FakeLag.Enabled and FakeLag.Id == Id then
+                        Root.Anchored = false
+                    end
+                end
+
+                task.wait(0.05)
+            end
+        end)
+    end
+
+    function FakeLag.Stop()
+        if not FakeLag.Enabled then
+            return
+        end
+
+        FakeLag.Enabled = false
+        FakeLag.Id = FakeLag.Id + 1
+        FakeLag.Release()
+    end
+
+    MovementTab:CreateToggle({
+        Name = "Fake Lag",
+        CurrentValue = false,
+        Flag = "FakeLag",
+        Callback = function(Value)
+            if Value then
+                FakeLag.Start()
+            else
+                FakeLag.Stop()
+            end
+        end,
+    })
+
+    MovementTab:CreateSlider({
+        Name = "Fake Lag Delay",
+        Range = {0.1, 5},
+        Increment = 0.1,
+        Suffix = "s",
+        CurrentValue = 2,
+        Flag = "FakeLagDelay",
+        Callback = function(Value)
+            FakeLag.Delay = Value
+        end,
+    })
+
+    table.insert(ExtraCleanups, FakeLag.Stop)
+end
+-- Player Collision
+do
+    local PC = {
+        Enabled = false,
+        Full = false,       -- collide with every part instead of just head/torso/root
+        Query = "",         -- blank = everyone, otherwise a name or display name prefix
+        Generation = 0,     -- bumped on every apply/clear so stale work stops itself
+        Connections = {},
+        Parts = setmetatable({}, { __mode = "k" }),
+        Allowed = { "Head", "Torso", "UpperTorso", "HumanoidRootPart" },
+    }
+
+    function PC.Matches(Player)
+        if Player == LocalPlayer then
+            return false
+        end
+
+        local Query = PC.Query:lower()
+        if Query == "" or Query == "all" or Query == "others" then
+            return true
+        end
+
+        return Player.Name:lower():sub(1, #Query) == Query
+            or Player.DisplayName:lower():sub(1, #Query) == Query
+    end
+    -- Invisible solid copy of a part, welded on, that doesn't collide with the original
+    function PC.AddCollidable(Part)
+        local Collidable = Instance.new("Part")
+        Collidable.Name = "__COLLIDABLE"
+        Collidable.Size = Part.Size
+        Collidable.Transparency = 1
+
+        local NoCollide = Instance.new("NoCollisionConstraint")
+        NoCollide.Part0 = Part
+        NoCollide.Part1 = Collidable
+        NoCollide.Parent = Collidable
+
+        local Weld = Instance.new("Weld")
+        Weld.Part0 = Part
+        Weld.Part1 = Collidable
+        Weld.Parent = Collidable
+
+        Collidable.Parent = Part
+        PC.Parts[Collidable] = true
+    end
+
+    function PC.Collidable(Character, Generation)
+        if not Character or Character == LocalPlayer.Character then
+            return
+        end
+        -- A freshly spawned character may not be in the workspace yet
+        for _ = 1, 20 do
+            if Character.Parent then
+                break
+            end
+            task.wait(0.1)
+        end
+        if not Character.Parent or PC.Generation ~= Generation then
+            return
+        end
+
+        local Count = 0
+        local function Add(Part)
+            if PC.Generation ~= Generation or not Part.Parent then
+                return
+            end
+
+            PC.AddCollidable(Part)
+            -- Pause every so often to avoid a lag spike
+            Count = Count + 1
+            if Count % 20 == 0 then
+                task.wait()
+            end
+        end
+
+        if PC.Full then
+            for _, Descendant in ipairs(Character:GetDescendants()) do
+                if Descendant:IsA("BasePart") and Descendant.Name ~= "__COLLIDABLE" then
+                    Add(Descendant)
+                end
+            end
+        else
+            for _, Name in ipairs(PC.Allowed) do
+                local Found = Character:FindFirstChild(Name)
+                if Found and Found:IsA("BasePart") then
+                    Add(Found)
+                end
+            end
+        end
+
+        if PC.Generation ~= Generation then
+            return
+        end
+        -- Also cover parts that show up later (accessories, respawned limbs)
+        table.insert(PC.Connections, Character.DescendantAdded:Connect(function(Child)
+            -- Skip our own colliders, otherwise full mode would keep copying them forever
+            if not Child:IsA("BasePart") or Child.Name == "__COLLIDABLE" then
+                return
+            end
+
+            if not PC.Full and (Child.Parent ~= Character or not table.find(PC.Allowed, Child.Name)) then
+                return
+            end
+
+            Add(Child)
+        end))
+    end
+
+    function PC.Clear()
+        PC.Generation = PC.Generation + 1
+
+        for _, Connection in ipairs(PC.Connections) do
+            Connection:Disconnect()
+        end
+        table.clear(PC.Connections)
+
+        for Part in pairs(PC.Parts) do
+            Part:Destroy()
+        end
+        table.clear(PC.Parts)
+    end
+
+    function PC.Apply()
+        PC.Clear()
+        local Generation = PC.Generation
+
+        local function Hook(Player)
+            if not PC.Matches(Player) then
+                return
+            end
+
+            if Player.Character then
+                task.spawn(PC.Collidable, Player.Character, Generation)
+            end
+
+            table.insert(PC.Connections, Player.CharacterAdded:Connect(function(Character)
+                PC.Collidable(Character, Generation)
+            end))
+        end
+
+        for _, Player in ipairs(Players:GetPlayers()) do
+            Hook(Player)
+        end
+        table.insert(PC.Connections, Players.PlayerAdded:Connect(Hook))
+    end
+
+    MovementTab:CreateToggle({
+        Name = "Player Collision",
+        CurrentValue = false,
+        Flag = "PlayerCollision",
+        Callback = function(Value)
+            PC.Enabled = Value
+            if Value then
+                PC.Apply()
+            else
+                PC.Clear()
+            end
+        end,
+    })
+
+    MovementTab:CreateToggle({
+        Name = "Full Body Collision",
+        CurrentValue = false,
+        Flag = "PlayerCollisionFull",
+        Callback = function(Value)
+            PC.Full = Value
+            if PC.Enabled then
+                PC.Apply()
+            end
+        end,
+    })
+
+    MovementTab:CreateInput({
+        Name = "Collision Target",
+        PlaceholderText = "blank = everyone, or a player name",
+        RemoveTextAfterFocusLost = false,
+        Callback = function(Text)
+            PC.Query = (Text or ""):match("^%s*(.-)%s*$")
+            if PC.Enabled then
+                PC.Apply()
+            end
+        end,
+    })
+
+    table.insert(ExtraCleanups, PC.Clear)
+end
 
 MovementTab:CreateButton({
     Name = "Sit",
@@ -4200,7 +4488,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.2.6"
+    Content = "1.2.7"
 })
 local function NotifyWelderCompatibility()
     local Missing = {}
@@ -4293,7 +4581,7 @@ NotifyExecutorCapabilities()
 NotifyWelderCompatibility()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.2.6 loaded successfully!",
+    Content = "Version 1.2.7 loaded successfully!",
     Duration = 3,
     Image = nil
 })
