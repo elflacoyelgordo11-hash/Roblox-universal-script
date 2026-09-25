@@ -121,12 +121,14 @@ local BangAnimID = 148840371
 local FrontSitAnimID = HeadSitAnimID
 local RideAnimID = BackpackAnimID
 local AnimTrack = nil
--- Feather Falling
+
+-- Feather Falling (converted from the FeatherFalling Infinite Yield plugin)
 local Feather = {
     Connection = nil,
     Gravity = 20,   -- gravity used while feather falling
     FallSpeed = 1,  -- start slowing down once falling faster than this (studs/s)
 }
+
 -- The gravity to go back to when you're not falling (respects the Gravity toggle below)
 function Feather.Normal()
     return GravityEnabled and CurrentGravity or DefaultGravity
@@ -507,7 +509,9 @@ local function DisableCustomCursor()
         customCursor = nil
     end
 end
+
 -- ESP Functions
+
 local function CreateESP(Player, ObjectTable, Prefix)
     if Player == LocalPlayer or ObjectTable[Player] then
         return
@@ -1052,6 +1056,123 @@ FunTab:CreateButton({
   loadstring(game:HttpGet("https://pastefy.app/yVlxzwk8/raw"))()
    end,
 })
+-- Music Player
+FunTab:CreateSection("Music Player")
+
+do
+    local SoundService = game:GetService("SoundService")
+
+    local Music = Instance.new("Sound")
+    Music.Name = "MOUSEDMusicPlayer"
+    Music.Volume = 0.5
+    Music.Looped = true
+    Music.Parent = SoundService
+
+    local function SetId(Input)
+        local Id = tostring(Input or ""):match("%d+")
+        if not Id then
+            Rayfield:Notify({
+                Title = "Music Player",
+                Content = "Enter a numeric sound ID, or the rbxassetid://... link.",
+                Duration = 4
+            })
+            return false
+        end
+
+        Music.SoundId = "rbxassetid://" .. Id
+        return true
+    end
+
+    FunTab:CreateInput({
+        Name = "Music Sound ID",
+        PlaceholderText = "e.g. 142376088",
+        RemoveTextAfterFocusLost = false,
+        Callback = function(Text)
+            if SetId(Text) then
+                Music:Play()
+            end
+        end,
+    })
+
+    FunTab:CreateButton({
+        Name = "Play",
+        Callback = function()
+            if Music.SoundId == "" then
+                Rayfield:Notify({
+                    Title = "Music Player",
+                    Content = "Enter a sound ID first.",
+                    Duration = 3
+                })
+                return
+            end
+            Music:Play()
+        end,
+    })
+
+    local PausedAt = nil
+
+    FunTab:CreateButton({
+        Name = "Pause",
+        Callback = function()
+            PausedAt = Music.TimePosition
+            Music:Pause()
+        end,
+    })
+
+    FunTab:CreateButton({
+        Name = "Unpause",
+        Callback = function()
+            if Music.SoundId == "" then
+                Rayfield:Notify({
+                    Title = "Music Player",
+                    Content = "Enter a sound ID first.",
+                    Duration = 3
+                })
+                return
+            end
+            -- Explicitly restore the saved position in case Play() alone resets it
+            if PausedAt then
+                Music.TimePosition = PausedAt
+            end
+            Music.Playing = true
+            Music:Play()
+        end,
+    })
+
+    FunTab:CreateButton({
+        Name = "Stop",
+        Callback = function()
+            Music:Stop()
+        end,
+    })
+
+    FunTab:CreateToggle({
+        Name = "Loop",
+        CurrentValue = true,
+        Flag = "MusicLoop",
+        Callback = function(Value)
+            Music.Looped = Value
+        end,
+    })
+
+    FunTab:CreateSlider({
+        Name = "Volume",
+        Range = {0, 100},
+        Increment = 1,
+        CurrentValue = 50,
+        Flag = "MusicVolume",
+        Callback = function(Value)
+            Music.Volume = Value / 100
+        end,
+    })
+
+    table.insert(ExtraCleanups, function()
+        Music:Stop()
+        Music:Destroy()
+    end)
+end
+
+FunTab:CreateSection("Uwuify Chat")
 
 do
     local TextChatService = game:GetService("TextChatService")
@@ -1059,7 +1180,7 @@ do
     local Rng = Random.new()
     local AutoToggle
     local Uwu = { Auto = false, Connection = nil, Ignore = {} }
-    -- Same substitutions, in the same order
+
     local Rules = {
         { "r", "w" }, { "R", "W" },
         { "l", "w" }, { "L", "W" },
@@ -1204,6 +1325,7 @@ do
             table.remove(Uwu.Ignore, 1)
             return
         end
+
         -- Don't touch empty messages or chat commands like /e dance
         if not Uwu.Auto or not Text:match("%S") or Text:sub(1, 1) == "/" then
             return
@@ -1291,6 +1413,58 @@ do
         Uwu.SetAuto(false)
     end)
 end
+OthersTab:CreateSection("Server Info")
+-- Server Info
+do
+    local Stats = game:GetService("Stats")
+
+    local RegionInfo = OthersTab:CreateParagraph({
+        Title = "Server Info",
+        Content = "Press \"Refresh Server Info\" to load.",
+    })
+
+    local function Refresh()
+        local Ping = "N/A"
+        pcall(function()
+            Ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue()) .. " ms"
+        end)
+
+        local Text = string.format(
+            "Ping: %s\nPlayers: %d / %d\nJobId: %s",
+            Ping,
+            #Players:GetPlayers(),
+            Players.MaxPlayers,
+            game.JobId
+        )
+
+        if RegionInfo.Set then
+            RegionInfo:Set({ Title = "Server Info", Content = Text })
+        else
+            RegionInfo.Content = Text
+        end
+    end
+
+    OthersTab:CreateButton({
+        Name = "Refresh Server Info",
+        Callback = Refresh,
+    })
+
+    Refresh()
+
+    local Running = true
+    task.spawn(function()
+        while Running do
+            task.wait(3)
+            if Running then
+                pcall(Refresh)
+            end
+        end
+    end)
+
+    table.insert(ExtraCleanups, function()
+        Running = false
+    end)
+end
 --Others
 OthersTab:CreateButton({
     Name = "Join Smallest Server",
@@ -1329,6 +1503,86 @@ OthersTab:CreateButton({
         end
     end,
 })
+
+OthersTab:CreateButton({
+    Name = "Join Low Ping Server",
+    Callback = function()
+        local Servers = GetServers()
+        if not Servers or #Servers == 0 then return end
+
+        -- The public server list's "ping" field is Roblox's own estimate for that server,
+        -- not a live measurement from you - use it as a rough guide, not an exact value.
+        local HasPing = false
+        for _, Server in ipairs(Servers) do
+            if Server.ping then
+                HasPing = true
+                break
+            end
+        end
+
+        if not HasPing then
+            Rayfield:Notify({
+                Title = "Join Low Ping Server",
+                Content = "This game's server list doesn't report ping - trying by lowest player count instead.",
+                Duration = 4
+            })
+            table.sort(Servers, function(a, b)
+                return a.playing < b.playing
+            end)
+        else
+            table.sort(Servers, function(a, b)
+                return (a.ping or math.huge) < (b.ping or math.huge)
+            end)
+        end
+
+        -- A server can reject the teleport (just filled up, taken down, etc.), so this
+        -- walks down the sorted list and keeps trying the next-lowest-ping server until
+        -- one actually accepts, instead of giving up after the first attempt.
+        local MaxAttempts = math.min(#Servers, 8)
+
+        local function TryJoin(Index)
+            if Index > MaxAttempts then
+                Rayfield:Notify({
+                    Title = "Join Low Ping Server",
+                    Content = "Couldn't join any of the top " .. MaxAttempts .. " servers. Try again in a moment.",
+                    Duration = 4
+                })
+                return
+            end
+
+            local Server = Servers[Index]
+            local Done = false
+            local Conn
+
+            Conn = LocalPlayer.OnTeleport:Connect(function(State)
+                if Done then return end
+
+                if State == Enum.TeleportState.Failed then
+                    Done = true
+                    Conn:Disconnect()
+                    TryJoin(Index + 1)
+                elseif State == Enum.TeleportState.InProgress or State == Enum.TeleportState.Started then
+                    -- Accepted - the client is on its way out, nothing left to do
+                    Done = true
+                    Conn:Disconnect()
+                end
+            end)
+
+            JoinServer(Server)
+
+            task.delay(6, function()
+                if not Done then
+                    Done = true
+                    Conn:Disconnect()
+                    TryJoin(Index + 1)
+                end
+            end)
+        end
+
+        TryJoin(1)
+    end,
+})
+
 
 OthersTab:CreateToggle({
     Name = "Anti-Cheat Bypass",
@@ -1401,7 +1655,7 @@ OthersTab:CreateToggle({
 })
 
 OthersTab:CreateToggle({
-    Name = "Anti Touch Interests",
+    Name = "Anti Touch",
     CurrentValue = false,
     Flag = "AntiTouch",
     Callback = function(Value)
@@ -1505,13 +1759,6 @@ OthersTab:CreateToggle({
             LocalPlayer.CameraMaxZoomDistance = 128
         end
     end,
-})
-
-OthersTab:CreateButton({
-   Name = "Fire all Touch Interests",
-   Callback = function()
-   loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Fire-all-Touch-Interests-60782"))()
-   end,
 })
 
 OthersTab:CreateButton({
@@ -3015,6 +3262,7 @@ OthersTab:CreateSlider({
         SpinSpeed = Value
     end,
 })
+
 -- Visuals Tab Features
 VisualsTab:CreateToggle({
     Name = "Custom Cursor",
@@ -4028,7 +4276,8 @@ MovementTab:CreateSlider({
 })
 
 table.insert(ExtraCleanups, Feather.Stop)
--- Fake Lag
+
+-- Fake Lag (converted from the fakelag Infinite Yield plugin)
 do
     local FakeLag = { Enabled = false, Delay = 2, Id = 0 }
 
@@ -4103,7 +4352,8 @@ do
 
     table.insert(ExtraCleanups, FakeLag.Stop)
 end
--- Player Collision
+
+-- Player Collision (converted from the playercollision Infinite Yield plugin)
 do
     local PC = {
         Enabled = false,
@@ -4128,6 +4378,7 @@ do
         return Player.Name:lower():sub(1, #Query) == Query
             or Player.DisplayName:lower():sub(1, #Query) == Query
     end
+
     -- Invisible solid copy of a part, welded on, that doesn't collide with the original
     function PC.AddCollidable(Part)
         local Collidable = Instance.new("Part")
@@ -4153,6 +4404,7 @@ do
         if not Character or Character == LocalPlayer.Character then
             return
         end
+
         -- A freshly spawned character may not be in the workspace yet
         for _ = 1, 20 do
             if Character.Parent then
@@ -4171,6 +4423,7 @@ do
             end
 
             PC.AddCollidable(Part)
+
             -- Pause every so often to avoid a lag spike
             Count = Count + 1
             if Count % 20 == 0 then
@@ -4196,6 +4449,7 @@ do
         if PC.Generation ~= Generation then
             return
         end
+
         -- Also cover parts that show up later (accessories, respawned limbs)
         table.insert(PC.Connections, Character.DescendantAdded:Connect(function(Child)
             -- Skip our own colliders, otherwise full mode would keep copying them forever
@@ -4320,6 +4574,112 @@ SettingsTab:CreateButton({
         game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId)
    end,
 })
+
+-- Auto Reconnect on Kick/Crash
+-- Needs the script running in your executor's auto-execute so it re-runs when Roblox reopens.
+-- A kicked/crashed session destroys this script entirely, so nothing here can act mid-crash -
+-- this only works by detecting, on the NEXT launch, that the last session ended without you
+-- stopping it yourself.
+do
+    local AR = {
+        File = "MOUSED_AutoReconnect.json",
+        Enabled = false,
+        SameServer = false,
+    }
+
+    function AR.Supported()
+        return typeof(isfile) == "function"
+            and typeof(readfile) == "function"
+            and typeof(writefile) == "function"
+    end
+
+    function AR.Save()
+        if not AR.Supported() then
+            return
+        end
+
+        pcall(function()
+            writefile(AR.File, HttpService:JSONEncode({
+                Enabled = AR.Enabled,
+                PlaceId = game.PlaceId,
+                JobId = game.JobId,
+            }))
+        end)
+    end
+
+    function AR.Load()
+        if not AR.Supported() or not isfile(AR.File) then
+            return nil
+        end
+
+        local Ok, Data = pcall(function()
+            return HttpService:JSONDecode(readfile(AR.File))
+        end)
+
+        if Ok and type(Data) == "table" then
+            return Data
+        end
+        return nil
+    end
+
+    -- Runs once when this script loads. If the last session was still marked Enabled
+    -- and we're now in a different server, the last session ended without a clean stop -
+    -- rejoin. If it's the same server (this script just got re-run manually), do nothing.
+    function AR.CheckOnStartup()
+        local Data = AR.Load()
+        if not Data or not Data.Enabled or Data.PlaceId ~= game.PlaceId or Data.JobId == game.JobId then
+            return
+        end
+
+        task.wait(3) -- give the place a moment to finish loading before jumping again
+
+        pcall(function()
+            if AR.SameServer and Data.JobId and Data.JobId ~= "" then
+                TeleportService:TeleportToPlaceInstance(Data.PlaceId, Data.JobId)
+            else
+                TeleportService:Teleport(Data.PlaceId)
+            end
+        end)
+    end
+
+    local StartupData = AR.Load()
+    AR.CheckOnStartup()
+
+    SettingsTab:CreateToggle({
+        Name = "Auto Reconnect on Kick/Crash",
+        CurrentValue = StartupData ~= nil and StartupData.Enabled or false,
+        Flag = "AutoReconnect",
+        Callback = function(Value)
+            AR.Enabled = Value
+
+            if Value and not AR.Supported() then
+                Rayfield:Notify({
+                    Title = "Auto Reconnect",
+                    Content = "Your executor doesn't expose writefile/readfile/isfile, so this can't persist across a crash.",
+                    Duration = 6
+                })
+            end
+
+            AR.Save()
+        end,
+    })
+
+    SettingsTab:CreateToggle({
+        Name = "Reconnect: Same Server",
+        CurrentValue = false,
+        Flag = "AutoReconnectSameServer",
+        Callback = function(Value)
+            AR.SameServer = Value
+        end,
+    })
+
+    -- A deliberate stop (Destroy UI) counts as a clean exit, so the next run doesn't reconnect
+    table.insert(ExtraCleanups, function()
+        AR.Enabled = false
+        AR.Save()
+    end)
+end
+
 
 local FOV = Camera.FieldOfView
 
@@ -4488,7 +4848,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.2.7"
+    Content = "1.2.8"
 })
 local function NotifyWelderCompatibility()
     local Missing = {}
@@ -4581,7 +4941,7 @@ NotifyExecutorCapabilities()
 NotifyWelderCompatibility()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.2.7 loaded successfully!",
+    Content = "Version 1.2.8 loaded successfully!",
     Duration = 3,
     Image = nil
 })
