@@ -1,6 +1,6 @@
 # Roblox-universal-script
 This is a universal script (meaning it works on every game) and i will update if theres a bug, if i want to add smth else, or if something just not working.
-# Changelogs Version 1.2.8
-Added Music Player, Added Auto Connect when kicked and stuff, and more.
+# Changelogs Version 1.2.9
+Im too lazy to say all of this (btw MOUSED doesn't work on mobile for now imma fix next update if it doesnt drive me fucking crazy.)
 # Notes
 If you want to execute MOUSED with the latest update/version then use Loadstring. Universal Script is for the Open Source Code. And also i might not update MOUSED alot for a long time
