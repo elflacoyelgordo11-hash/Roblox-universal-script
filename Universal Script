@@ -1130,6 +1130,7 @@ do
                 })
                 return
             end
+
             -- Explicitly restore the saved position in case Play() alone resets it
             if PausedAt then
                 Music.TimePosition = PausedAt
@@ -1205,6 +1206,7 @@ do
         for _, Rule in ipairs(Rules) do
             Result = string.gsub(Result, Rule[1], Rule[2])
         end
+
         -- Random stutter: "hello" -> "h-hello"
         local Chars = {}
         for i = 1, #Result do
@@ -1413,14 +1415,275 @@ do
         Uwu.SetAuto(false)
     end)
 end
-OthersTab:CreateSection("Server Info")
--- Server Info
+
+-- 90s Bully Chat (fan-made, same idea as Uwuify above)
+FunTab:CreateSection("90s Bully Chat")
+
+do
+    local TextChatService = game:GetService("TextChatService")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Rng = Random.new()
+    local AutoToggle
+    local Bully = { Auto = false, Connection = nil, Ignore = {} }
+
+    -- Word swaps, in order
+    local Rules = {
+        { "you", "ya" }, { "You", "Ya" },
+        { "please", "beg for it" }, { "Please", "Beg for it" },
+        { "friend", "chump" }, { "Friend", "Chump" },
+        { "cool", "lame" }, { "Cool", "Lame" },
+        { "smart", "nerdy" }, { "Smart", "Nerdy" },
+        { "sorry", "too bad" }, { "Sorry", "Too bad" },
+        { "yes", "yeah whatever" }, { "Yes", "Yeah whatever" },
+        { "no", "nuh-uh" }, { "No", "Nuh-uh" },
+    }
+
+    local Prefixes = {
+        "Yo nerd, ", "Hey loser, ", "Listen up dweeb, ", "Check it, ",
+        "HEY YOU, ", "Well well, ", "", "", "",
+    }
+
+    local Suffixes = {
+        " ...loser!", " HAHAHA!", " what a dweeb.", " gimme your lunch money.",
+        " go cry about it.", " total wedgie material.", " NERD ALERT.",
+        " lol scrub.", " or I'll take your Trapper Keeper.", " geek.",
+    }
+
+    function Bully.Transform(Input)
+        local Result = tostring(Input or "")
+
+        for _, Rule in ipairs(Rules) do
+            Result = string.gsub(Result, Rule[1], Rule[2])
+        end
+
+        -- Random schoolyard shouting: some words get YELLED
+        Result = Result:gsub("%a+", function(Word)
+            if Rng:NextNumber() > 0.85 then
+                return Word:upper()
+            end
+            return Word
+        end)
+
+        if Rng:NextNumber() > 0.4 then
+            Result = Prefixes[Rng:NextInteger(1, #Prefixes)] .. Result
+        end
+
+        local Suffix = Suffixes[Rng:NextInteger(1, #Suffixes)]
+
+        -- Keep the final message inside Roblox's 200 character chat limit
+        local MaxBody = 200 - (utf8.len(Suffix) or #Suffix)
+        local BodyLength = utf8.len(Result) or #Result
+        if BodyLength > MaxBody then
+            Result = Result:sub(1, (utf8.offset(Result, MaxBody + 1) or (MaxBody + 1)) - 1)
+        end
+
+        return Result .. Suffix
+    end
+
+    -- Received chat text can come back rich-text escaped
+    function Bully.Unescape(Text)
+        Text = string.gsub(Text, "&lt;", "<")
+        Text = string.gsub(Text, "&gt;", ">")
+        Text = string.gsub(Text, "&quot;", '"')
+        Text = string.gsub(Text, "&apos;", "'")
+        Text = string.gsub(Text, "&amp;", "&")
+        return Text
+    end
+
+    function Bully.GetChannel()
+        local Channels = TextChatService:FindFirstChild("TextChannels")
+        if not Channels then
+            return nil
+        end
+
+        local General = Channels:FindFirstChild("RBXGeneral")
+        if General then
+            return General
+        end
+
+        -- Some games rename or remove RBXGeneral: use any channel we're a member of
+        for _, Channel in ipairs(Channels:GetChildren()) do
+            if Channel:IsA("TextChannel") and Channel:FindFirstChild(LocalPlayer.Name) then
+                return Channel
+            end
+        end
+
+        return nil
+    end
+
+    -- Shows why something failed instead of failing silently
+    function Bully.Fail(Reason)
+        warn("[MOUSED] 90s Bully: " .. tostring(Reason))
+        Rayfield:Notify({
+            Title = "90s Bully failed",
+            Content = tostring(Reason),
+            Duration = 6
+        })
+    end
+
+    -- Returns true, or false plus the reason it failed
+    function Bully.Send(Message)
+        -- Remember messages we sent ourselves so auto mode doesn't bully-ify them again
+        local Tracked = Bully.Auto
+        if Tracked then
+            table.insert(Bully.Ignore, os.clock())
+        end
+
+        local Reason = "no chat channel found in this game"
+
+        local Channel = Bully.GetChannel()
+        if Channel then
+            local Ok, Err = pcall(function()
+                Channel:SendAsync(Message)
+            end)
+            if Ok then
+                return true
+            end
+            Reason = "SendAsync error: " .. tostring(Err)
+        end
+
+        -- Legacy chat fallback
+        local Events = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+        local SayMessage = Events and Events:FindFirstChild("SayMessageRequest")
+        if SayMessage then
+            local Ok, Err = pcall(function()
+                SayMessage:FireServer(Message, "All")
+            end)
+            if Ok then
+                return true
+            end
+            Reason = "legacy chat error: " .. tostring(Err)
+        end
+
+        if Tracked then
+            table.remove(Bully.Ignore)
+        end
+        return false, Reason
+    end
+
+    -- Transforms and sends, reporting any failure
+    function Bully.SendTransformed(Text)
+        local Built, Message = pcall(Bully.Transform, Text)
+        if not Built then
+            Bully.Fail("couldn't bully-ify that: " .. tostring(Message))
+            return
+        end
+
+        local Sent, Reason = Bully.Send(Message)
+        if not Sent then
+            Bully.Fail(Reason)
+        end
+    end
+
+    function Bully.OnOwnMessage(Text)
+        -- Skip the echo of messages this script sent
+        local Now = os.clock()
+        while Bully.Ignore[1] and Now - Bully.Ignore[1] > 5 do
+            table.remove(Bully.Ignore, 1)
+        end
+        if Bully.Ignore[1] then
+            table.remove(Bully.Ignore, 1)
+            return
+        end
+
+        -- Don't touch empty messages or chat commands like /e dance
+        if not Bully.Auto or not Text:match("%S") or Text:sub(1, 1) == "/" then
+            return
+        end
+
+        Bully.SendTransformed(Text)
+    end
+
+    function Bully.SetAuto(State)
+        Bully.Auto = State
+        table.clear(Bully.Ignore)
+
+        if Bully.Connection then
+            Bully.Connection:Disconnect()
+            Bully.Connection = nil
+        end
+
+        if not State then
+            return true
+        end
+
+        local Channel = Bully.GetChannel()
+        if Channel then
+            Bully.Connection = Channel.MessageReceived:Connect(function(Message)
+                local Source = Message.TextSource
+                if Source and Source.UserId == LocalPlayer.UserId then
+                    Bully.OnOwnMessage(Bully.Unescape(Message.Text or ""))
+                end
+            end)
+            return true
+        end
+
+        if ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents") then
+            Bully.Connection = LocalPlayer.Chatted:Connect(function(Text)
+                Bully.OnOwnMessage(Text)
+            end)
+            return true
+        end
+
+        Bully.Auto = false
+        return false
+    end
+
+    FunTab:CreateInput({
+        Name = "90s Bully Message",
+        PlaceholderText = "type a message, press enter",
+        RemoveTextAfterFocusLost = true,
+        Callback = function(Text)
+            if not Text or not Text:match("%S") then
+                return
+            end
+
+            Bully.SendTransformed(Text)
+        end,
+    })
+
+    AutoToggle = FunTab:CreateToggle({
+        Name = "Auto 90s Bully",
+        CurrentValue = false,
+        Flag = "Auto90sBully",
+        Callback = function(Value)
+            if not Bully.SetAuto(Value) then
+                Rayfield:Notify({
+                    Title = "Auto 90s Bully",
+                    Content = "Couldn't find a chat channel to watch.",
+                    Duration = 3
+                })
+                if Value and AutoToggle then
+                    AutoToggle:Set(false)
+                end
+                return
+            end
+
+            if Value then
+                Rayfield:Notify({
+                    Title = "Auto 90s Bully",
+                    Content = "On. Your original message still sends first, then the bully copy.",
+                    Duration = 4
+                })
+            end
+        end,
+    })
+
+    table.insert(ExtraCleanups, function()
+        Bully.SetAuto(false)
+    end)
+end
+
+OthersTab:CreateSection("Region Info")
+-- Region Info
+-- Roblox doesn't give client scripts the server's physical datacenter, so this shows what's
+-- actually available: live ping, player count and the server's JobId.
 do
     local Stats = game:GetService("Stats")
 
     local RegionInfo = OthersTab:CreateParagraph({
-        Title = "Server Info",
-        Content = "Press \"Refresh Server Info\" to load.",
+        Title = "Region Info",
+        Content = "Press \"Refresh Region Info\" to load.",
     })
 
     local function Refresh()
@@ -1438,14 +1701,14 @@ do
         )
 
         if RegionInfo.Set then
-            RegionInfo:Set({ Title = "Server Info", Content = Text })
+            RegionInfo:Set({ Title = "Region Info", Content = Text })
         else
             RegionInfo.Content = Text
         end
     end
 
     OthersTab:CreateButton({
-        Name = "Refresh Server Info",
+        Name = "Refresh Region Info",
         Callback = Refresh,
     })
 
@@ -1465,6 +1728,8 @@ do
         Running = false
     end)
 end
+
+
 --Others
 OthersTab:CreateButton({
     Name = "Join Smallest Server",
@@ -2367,6 +2632,104 @@ local function GetPlayerNames()
     table.sort(Names)
 
     return Names
+end
+
+do
+    local function ExtractSoundId(Tool)
+        local Sound = Tool:FindFirstChildWhichIsA("Sound", true)
+        if not Sound then
+            return nil
+        end
+        return Sound.SoundId:match("%d+")
+    end
+
+    local function GetBoomboxId(Player)
+        local Character = Player and Player.Character
+        if not Character then
+            return nil
+        end
+
+        local Boombox = Character:FindFirstChild("Boombox")
+        if Boombox and Boombox:IsA("Tool") then
+            return ExtractSoundId(Boombox)
+        end
+
+        -- Some games name the tool differently - fall back to any equipped Tool
+        for _, Child in ipairs(Character:GetChildren()) do
+            if Child:IsA("Tool") then
+                local Id = ExtractSoundId(Child)
+                if Id then
+                    return Id
+                end
+            end
+        end
+
+        return nil
+    end
+
+    local Target = ""
+
+    local function Matches(Player)
+        local Query = Target:lower()
+        if Query == "" or Query == "all" or Query == "everyone" then
+            return true
+        end
+        return Player.Name:lower():sub(1, #Query) == Query
+            or Player.DisplayName:lower():sub(1, #Query) == Query
+    end
+
+    OthersTab:CreateInput({
+        Name = "Boombox Target",
+        PlaceholderText = "blank = everyone, or a player name",
+        RemoveTextAfterFocusLost = false,
+        Callback = function(Text) 
+            Target = (Text or ""):match("^%s*(.-)%s*$")
+        end,
+    })
+
+    OthersTab:CreateButton({
+        Name = "Get Boombox ID",
+        Callback = function()
+            local Ids = {}
+
+            for _, Player in ipairs(Players:GetPlayers()) do
+                if Player ~= LocalPlayer and Matches(Player) then
+                    local Id = GetBoomboxId(Player)
+                    if Id then
+                        table.insert(Ids, Player.Name .. ": " .. Id)
+                    end
+                end
+            end
+
+            if #Ids == 0 then
+                Rayfield:Notify({
+                    Title = "Get Boombox ID",
+                    Content = "No matching player has a boombox playing right now.",
+                    Duration = 4
+                })
+                return
+            end
+
+            local Result = table.concat(Ids, "\n")
+            local Copied = false
+
+            if typeof(setclipboard) == "function" then
+                Copied = pcall(setclipboard, Result)
+            elseif typeof(toclipboard) == "function" then
+                Copied = pcall(toclipboard, Result)
+            end
+
+            print("[MOUSED] Boombox IDs:\n" .. Result)
+
+            Rayfield:Notify({
+                Title = "Get Boombox ID",
+                Content = Copied
+                    and ("Copied " .. #Ids .. " ID(s) to your clipboard.")
+                    or ("Found " .. #Ids .. " ID(s) - printed to console (no clipboard support).") ,
+                Duration = 5
+            })
+        end,
+    })
 end
 
 local LastDeathCFrame = nil
@@ -4848,7 +5211,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.2.8"
+    Content = "1.2.9"
 })
 local function NotifyWelderCompatibility()
     local Missing = {}
@@ -4941,7 +5304,7 @@ NotifyExecutorCapabilities()
 NotifyWelderCompatibility()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.2.8 loaded successfully!",
+    Content = "Version 1.2.9 loaded successfully!",
     Duration = 3,
     Image = nil
 })
