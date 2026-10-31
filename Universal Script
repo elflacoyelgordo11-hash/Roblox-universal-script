@@ -5572,7 +5572,7 @@ SettingsTab:CreateParagraph({
 
 SettingsTab:CreateParagraph({
     Title = "Version",
-    Content = "1.2.9"
+    Content = "1.3.0"
 })
 local function NotifyWelderCompatibility()
     local Missing = {}
