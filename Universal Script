@@ -19,7 +19,6 @@ local customCursor = nil
 local ESPEnabled = false
 local ESPColor = Color3.fromRGB(255, 0, 0)
 local ESPTransparency = 0.5
-local RainbowESP = false
 local ESPObjects = {}
 local ESPUpdateConnection = nil
 local TeamESPEnabled = false
@@ -51,6 +50,32 @@ local FlySpeed = 50
 local FlyConnection = nil
 local FlyBodyVelocity = nil
 local FlyBodyGyro = nil
+local ExtraMovementState = {
+    FakeInvisEnabled = false,
+    FakeInvisAccurate = false,
+    FakeInvisHighlightEnabled = false,
+    FakeInvisVerticalOffset = 7,
+    FakeInvisRenderStepName = "MOUSED_FakeInvis_" .. HttpService:GenerateGUID(false),
+    FakeInvisLateRenderStepName = nil,
+    FakeInvisConnections = {},
+    FakeInvisRoot = nil,
+    FakeInvisOriginalCFrame = nil,
+    FakeInvisHighlight = nil,
+    FloatPlatformEnabled = false,
+    FloatPlatformSize = 5,
+    FloatPlatformTransparency = 1,
+    FloatPlatformOffset = 3,
+    FloatPlatformMoveSpeed = 0.1,
+    FloatPlatform = nil,
+    FloatPlatformCharacter = nil,
+    FloatPlatformY = nil,
+    FloatUpdateConnection = nil,
+    FloatMoveUpHeld = false,
+    FloatMoveDownHeld = false,
+    FloatMobileGui = nil,
+    FloatMobileInputEndedConnection = nil,
+}
+ExtraMovementState.FakeInvisLateRenderStepName = ExtraMovementState.FakeInvisRenderStepName .. "_late"
 local GravityEnabled = false
 local CurrentGravity = Workspace.Gravity
 local DefaultGravity = Workspace.Gravity
@@ -169,165 +194,127 @@ local function IsMobileInput()
     return UserInputService and UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 end
 
+-- The Welder offsets are authored relative to the torso, not HumanoidRootPart.
+-- Match the original Welder plugin's target-part selection so each preset lands
+-- at the intended location on both R6 and R15 characters.
 local function GetTargetRoot(character)
     if not character then return nil end
 
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if humanoid and humanoid.RootPart then
-        return humanoid.RootPart
+    if humanoid and humanoid.RigType == Enum.HumanoidRigType.R15 then
+        return character:FindFirstChild("UpperTorso")
+            or character:FindFirstChild("HumanoidRootPart")
+            or humanoid.RootPart
     end
 
-    local candidateNames = {
-        "HumanoidRootPart",
-        "UpperTorso",
-        "Torso",
-        "RootPart",
-        "LowerTorso",
-        "Head"
+    if humanoid and humanoid.RigType == Enum.HumanoidRigType.R6 then
+        return character:FindFirstChild("Torso")
+            or character:FindFirstChild("HumanoidRootPart")
+            or humanoid.RootPart
+    end
+
+    return character:FindFirstChild("UpperTorso")
+        or character:FindFirstChild("Torso")
+        or character:FindFirstChild("HumanoidRootPart")
+        or (humanoid and humanoid.RootPart)
+end
+
+local function CreateLocalWeld(TargetPart, Offset, Speaker, AnimId)
+    local Character = Speaker and Speaker.Character
+    if not Character or not TargetPart or not TargetPart:IsA("BasePart") then
+        return nil
+    end
+
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local Root = Character:FindFirstChild("HumanoidRootPart")
+    if not Humanoid or not Root then return nil end
+
+    local Weld = {
+        Destroyed = false,
+        Connection = nil,
+        OriginalProperties = {}
     }
 
-    for _, name in ipairs(candidateNames) do
-        local part = character:FindFirstChild(name)
-        if part then
-            return part
+    -- Save and temporarily change character-part physics properties.
+    for _, Part in ipairs(Character:GetDescendants()) do
+        if Part:IsA("BasePart") then
+            Weld.OriginalProperties[Part] = {
+                CanCollide = Part.CanCollide,
+                Massless = Part.Massless
+            }
+            Part.CanCollide = false
+            Part.Massless = true
         end
     end
 
-    if humanoid then
-        return character:FindFirstChildOfClass("BasePart")
-    end
-
-    return nil
-end
-
-local function WeldTo(TargetPart, Offset, Speaker, AnimId)
-    local Character = Speaker.Character
-    if not Character then return nil end
-
-    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-    local Root = Character:FindFirstChild("HumanoidRootPart") or (Humanoid and Humanoid.RootPart)
-
-    if not Root or not Humanoid then return nil end
-    
-    local AnimTrack = nil
+    local AnimTrack
     if AnimId and tostring(AnimId) ~= "0" then
-        local Animator = Character:FindFirstChildWhichIsA("Animator", true)
+        local Animator = Humanoid:FindFirstChildOfClass("Animator")
         if Animator then
             local Animation = Instance.new("Animation")
             Animation.AnimationId = "rbxassetid://" .. tostring(AnimId)
             pcall(function()
                 AnimTrack = Animator:LoadAnimation(Animation)
-                if AnimTrack then AnimTrack:Play() end
+                AnimTrack:Play()
             end)
+            Animation:Destroy()
         end
     end
 
-    local Weld = {}
-    local Connection = nil
-    
-    for _, v in pairs(Character:GetDescendants()) do
-        if v:IsA("BasePart") then
-            v.CanCollide = false
-            v.Massless = true
+    function Weld:Destroy()
+        if Weld.Destroyed then return end
+        Weld.Destroyed = true
+
+        if Weld.Connection then
+            Weld.Connection:Disconnect()
+            Weld.Connection = nil
+        end
+
+        if AnimTrack then
+            pcall(function() AnimTrack:Stop() end)
+            pcall(function() AnimTrack:Destroy() end)
+            AnimTrack = nil
+        end
+
+        for Part, Properties in pairs(Weld.OriginalProperties) do
+            if Part and Part.Parent then
+                Part.CanCollide = Properties.CanCollide
+                Part.Massless = Properties.Massless
+            end
+        end
+        table.clear(Weld.OriginalProperties)
+
+        if Root and Root.Parent then
+            Root.AssemblyLinearVelocity = Vector3.zero
+            Root.AssemblyAngularVelocity = Vector3.zero
         end
     end
-    
-    Connection = RunService.Heartbeat:Connect(function()
-        if not Character.Parent or not TargetPart.Parent then
-            if Weld.Destroy then Weld:Destroy() end
+
+    Weld.Connection = RunService.Heartbeat:Connect(function()
+        if Weld.Destroyed then return end
+        if not Character.Parent or not Root.Parent or not TargetPart.Parent then
+            Weld:Destroy()
             return
         end
 
-        Root.CFrame = TargetPart.CFrame * Offset
-        
+        -- Local visual positioning only; this does not force server replication.
+        Root.CFrame = TargetPart.CFrame * (Offset or CFrame.new())
+
         if WeldCopyVelocity then
             Root.AssemblyLinearVelocity = TargetPart.AssemblyLinearVelocity
             Root.AssemblyAngularVelocity = TargetPart.AssemblyAngularVelocity
         end
-        
-        if sethiddenproperty then
-            pcall(function()
-                sethiddenproperty(Root, "PhysicsRepRootPart", TargetPart)
-            end)
-        end
     end)
-
-    function Weld:Destroy()
-        if Connection then Connection:Disconnect() end
-        if AnimTrack then AnimTrack:Stop(); AnimTrack:Destroy() end
-        
-        if Root then
-            Root.AssemblyLinearVelocity = Vector3.zero
-            Root.AssemblyAngularVelocity = Vector3.zero
-        end
-    end
 
     return Weld
 end
 
+local function WeldTo(TargetPart, Offset, Speaker, AnimId)
+    return CreateLocalWeld(TargetPart, Offset, Speaker, AnimId)
+end
+
 local function JustWeld(FakePart, Offset, Speaker, AnimationId)
-    local Character = Speaker.Character
-    if not Character then return nil end
-
-    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-    local Root = Character:FindFirstChild("HumanoidRootPart") or (Humanoid and Humanoid.RootPart)
-
-    if not Root or not Humanoid then return nil end
-
-    local AnimTrack = nil
-    if AnimationId and tostring(AnimationId) ~= "0" then
-        local Animator = Character:FindFirstChildWhichIsA("Animator", true)
-        if Animator then
-            local Animation = Instance.new("Animation")
-            Animation.AnimationId = "rbxassetid://" .. tostring(AnimationId)
-            pcall(function()
-                AnimTrack = Animator:LoadAnimation(Animation)
-                if AnimTrack then AnimTrack:Play() end
-            end)
-        end
-    end
-
-    local Weld = {}
-    local Connection = nil
-
-    for _, v in pairs(Character:GetDescendants()) do
-        if v:IsA("BasePart") then
-            v.CanCollide = false
-            v.Massless = true
-        end
-    end
-
-    Connection = RunService.Heartbeat:Connect(function()
-        if not Character.Parent or not FakePart.Parent then
-            if Weld.Destroy then Weld:Destroy() end
-            return
-        end
-
-        Root.CFrame = FakePart.CFrame * Offset
-        
-        if WeldCopyVelocity then
-            Root.AssemblyLinearVelocity = FakePart.AssemblyLinearVelocity
-            Root.AssemblyAngularVelocity = FakePart.AssemblyAngularVelocity
-        end
-
-        if sethiddenproperty then
-            pcall(function()
-                sethiddenproperty(Root, "PhysicsRepRootPart", FakePart)
-            end)
-        end
-    end)
-
-    function Weld:Destroy()
-        if Connection then Connection:Disconnect() end
-        if AnimTrack then AnimTrack:Stop(); AnimTrack:Destroy() end
-        
-        if Root then
-            Root.AssemblyLinearVelocity = Vector3.zero
-            Root.AssemblyAngularVelocity = Vector3.zero
-        end
-    end
-
-    return Weld
+    return CreateLocalWeld(FakePart, Offset, Speaker, AnimationId)
 end
 
 local function UnweldAll()
@@ -512,259 +499,224 @@ end
 
 -- ESP Functions
 
+local ESPCharacterConnections = {}
+local Camera = workspace.CurrentCamera
+
 local function CreateESP(Player, ObjectTable, Prefix)
-    if Player == LocalPlayer or ObjectTable[Player] then
-        return
-    end
+    if Player == LocalPlayer or ObjectTable[Player] then return end
 
     local Highlight = Instance.new("Highlight")
     Highlight.Name = Prefix .. "_ESP"
-    Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     Highlight.Enabled = false
-    Highlight.FillTransparency = 0.5
-    Highlight.OutlineTransparency = 0.3
+    Highlight.FillTransparency = 1
+    Highlight.OutlineTransparency = 1
 
     local Billboard = Instance.new("BillboardGui")
     Billboard.Name = Prefix .. "_ESPName"
     Billboard.AlwaysOnTop = true
-    Billboard.Size = UDim2.new(0, 200, 0, 50)
+    Billboard.Size = UDim2.fromOffset(160, 34)
     Billboard.StudsOffset = Vector3.new(0, 3, 0)
     Billboard.Enabled = false
 
     local NameLabel = Instance.new("TextLabel")
     NameLabel.BackgroundTransparency = 1
-    NameLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    NameLabel.Font = Enum.Font.SourceSansBold
+    NameLabel.Size = UDim2.new(1, 0, 0.55, 0)
+    NameLabel.Font = Enum.Font.GothamBold
     NameLabel.TextSize = 14
     NameLabel.Text = Player.Name
-    NameLabel.TextStrokeTransparency = 0
+    NameLabel.TextColor3 = Color3.new(1, 1, 1)
+    NameLabel.TextStrokeTransparency = 0.25
     NameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
     NameLabel.Parent = Billboard
 
     local DistanceLabel = Instance.new("TextLabel")
     DistanceLabel.BackgroundTransparency = 1
-    DistanceLabel.Position = UDim2.new(0, 0, 0.5, 0)
-    DistanceLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    DistanceLabel.Font = Enum.Font.SourceSans
+    DistanceLabel.Position = UDim2.new(0, 0, 0.55, 0)
+    DistanceLabel.Size = UDim2.new(1, 0, 0.45, 0)
+    DistanceLabel.Font = Enum.Font.Gotham
     DistanceLabel.TextSize = 12
     DistanceLabel.Text = "0 studs"
-    DistanceLabel.TextStrokeTransparency = 0
+    DistanceLabel.TextColor3 = Color3.new(1, 1, 1)
+    DistanceLabel.TextStrokeTransparency = 0.25
     DistanceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
     DistanceLabel.Parent = Billboard
+
+    local PlayerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local BoxGui = Instance.new("ScreenGui")
+    BoxGui.Name = Prefix .. "_ESPBoxGui"
+    BoxGui.IgnoreGuiInset = true
+    BoxGui.ResetOnSpawn = false
+    BoxGui.DisplayOrder = 20
+    BoxGui.Enabled = false
+    BoxGui.Parent = PlayerGui or game:GetService("CoreGui")
+
+    local Box = Instance.new("Frame")
+    Box.Name = "PlayerBox"
+    Box.BackgroundTransparency = 1
+    Box.BorderSizePixel = 0
+    Box.Visible = false
+    Box.Parent = BoxGui
+
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Thickness = 1.5
+    Stroke.Transparency = 0
+    Stroke.Parent = Box
+
+    local Shadow = Instance.new("UIStroke")
+    Shadow.Thickness = 3.5
+    Shadow.Color = Color3.new(0, 0, 0)
+    Shadow.Transparency = 0.35
+    Shadow.Parent = Box
 
     ObjectTable[Player] = {
         Highlight = Highlight,
         Billboard = Billboard,
         NameLabel = NameLabel,
         DistanceLabel = DistanceLabel,
-        BodyPartBoxes = {}
+        BoxGui = BoxGui,
+        Box = Box,
+        BoxStroke = Stroke
     }
 end
 
-local function ClearBodyPartBoxes(ESP)
-    for Part, Box in pairs(ESP.BodyPartBoxes) do
-        Box:Destroy()
-        ESP.BodyPartBoxes[Part] = nil
-    end
-end
-
-local function UpdateBodyPartBoxes(Character, ESP, Color, Transparency)
-    local CurrentParts = {}
-
-    for _, Part in ipairs(Character:GetDescendants()) do
-        if Part:IsA("BasePart") and Part.Transparency < 1 then
-            CurrentParts[Part] = true
-
-            local Box = ESP.BodyPartBoxes[Part]
-
-            if not Box then
-                Box = Instance.new("BoxHandleAdornment")
-                Box.Name = "BodyPartESP"
-                Box.Adornee = Part
-                Box.AlwaysOnTop = true
-                Box.ZIndex = 5
-                Box.Parent = Part
-                ESP.BodyPartBoxes[Part] = Box
-            end
-
-            Box.Size = Part.Size
-            Box.Color3 = Color
-            Box.Transparency = math.clamp(Transparency + 0.2, 0, 1)
-        end
-    end
-
-    for Part, Box in pairs(ESP.BodyPartBoxes) do
-        if not CurrentParts[Part] then
-            Box:Destroy()
-            ESP.BodyPartBoxes[Part] = nil
-        end
-    end
+local function ClearESPVisuals(ESP)
+    ESP.Highlight.Enabled = false
+    ESP.Billboard.Enabled = false
+    ESP.BoxGui.Enabled = false
+    ESP.Box.Visible = false
 end
 
 local function AttachESP(Player, ESP)
     local Character = Player.Character
+    if not Character then return end
 
-    if not Character then
-        return
-    end
-
-    ESP.Highlight.Adornee = Character
-    ESP.Highlight.Parent = Character
+    ESP.Highlight.Adornee = nil
+    ESP.Highlight.Parent = nil
 
     local Head = Character:FindFirstChild("Head")
         or Character:FindFirstChild("UpperTorso")
         or Character:FindFirstChild("Torso")
-
-    if Head then
-        ESP.Billboard.Parent = Head
-    end
+    if Head then ESP.Billboard.Parent = Head end
 end
 
-local function UpdateESPObject(Player, ESP, Enabled, Color, Transparency, UseBodyPartFallback)
+local function UpdateESPObject(Player, ESP, Enabled, Color, Transparency)
     local Character = Player.Character
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-    local Root = Character and (
-        Character:FindFirstChild("HumanoidRootPart")
-        or Character:FindFirstChild("UpperTorso")
-        or Character:FindFirstChild("Torso")
-        or Character.PrimaryPart
-    )
-
-    if Character and not Root then
-        Root = Character:FindFirstChildWhichIsA("BasePart", true)
-    end
+    local Root = Character and Character:FindFirstChild("HumanoidRootPart")
 
     if not Enabled or not Character or not Root or (Humanoid and Humanoid.Health <= 0) then
-        ESP.Highlight.Enabled = false
-        ESP.Billboard.Enabled = false
-        ClearBodyPartBoxes(ESP)
+        ClearESPVisuals(ESP)
         return
     end
 
-    local FinalColor = Color
-
-    if Player == LocalPlayer then
+    Camera = workspace.CurrentCamera or Camera
+    if not Camera then
+        ClearESPVisuals(ESP)
         return
     end
-
-    ESP.Highlight.FillColor = FinalColor
-    ESP.Highlight.OutlineColor = FinalColor
-    ESP.Highlight.FillTransparency = Transparency
-    ESP.Highlight.OutlineTransparency = math.max(0, Transparency - 0.2)
-
-    ESP.NameLabel.TextColor3 = FinalColor
-    ESP.DistanceLabel.TextColor3 = FinalColor
 
     local MyCharacter = LocalPlayer.Character
     local MyRoot = MyCharacter and MyCharacter:FindFirstChild("HumanoidRootPart")
-
     if MyRoot then
-        local Distance = math.floor(
-            (MyRoot.Position - Root.Position).Magnitude
-        )
-
-        ESP.DistanceLabel.Text = tostring(Distance) .. " studs"
+        ESP.DistanceLabel.Text = tostring(math.floor((MyRoot.Position - Root.Position).Magnitude)) .. " studs"
     end
 
-    if ESP.Highlight.Parent ~= Character then
-        ESP.Highlight.Parent = Character
+    ESP.NameLabel.TextColor3 = Color
+    ESP.DistanceLabel.TextColor3 = Color
+    ESP.BoxStroke.Color = Color
+
+    local Head = Character:FindFirstChild("Head") or Root
+    if ESP.Billboard.Parent ~= Head then ESP.Billboard.Parent = Head end
+
+    -- Project all eight corners of the character's bounding box into screen space.
+    local Success, BoxCFrame, BoxSize = pcall(function()
+        return Character:GetBoundingBox()
+    end)
+    if not Success then
+        ClearESPVisuals(ESP)
+        return
     end
 
-    if ESP.Highlight.Adornee ~= Character then
-        ESP.Highlight.Adornee = Character
+    local Half = BoxSize * 0.5
+    local MinX, MinY = math.huge, math.huge
+    local MaxX, MaxY = -math.huge, -math.huge
+    local VisibleCorners = 0
+
+    for X = -1, 1, 2 do
+        for Y = -1, 1, 2 do
+            for Z = -1, 1, 2 do
+                local WorldPoint = BoxCFrame:PointToWorldSpace(Vector3.new(Half.X * X, Half.Y * Y, Half.Z * Z))
+                local ScreenPoint, OnScreen = Camera:WorldToViewportPoint(WorldPoint)
+                if ScreenPoint.Z > 0 then
+                    VisibleCorners += 1
+                    MinX = math.min(MinX, ScreenPoint.X)
+                    MinY = math.min(MinY, ScreenPoint.Y)
+                    MaxX = math.max(MaxX, ScreenPoint.X)
+                    MaxY = math.max(MaxY, ScreenPoint.Y)
+                end
+            end
+        end
     end
 
-    local Head = Character:FindFirstChild("Head")
-        or Character:FindFirstChild("UpperTorso")
-        or Character:FindFirstChild("Torso")
-        or Root
-
-    if Head and ESP.Billboard.Parent ~= Head then
-        ESP.Billboard.Parent = Head
-    end
-
-    if UseBodyPartFallback then
-        ESP.Highlight.Enabled = false
-        UpdateBodyPartBoxes(Character, ESP, FinalColor, Transparency)
+    local Viewport = Camera.ViewportSize
+    if VisibleCorners < 2 or MaxX < 0 or MaxY < 0 or MinX > Viewport.X or MinY > Viewport.Y then
+        ESP.Box.Visible = false
+        ESP.BoxGui.Enabled = false
     else
-        ClearBodyPartBoxes(ESP)
-        ESP.Highlight.Enabled = true
+        MinX = math.clamp(MinX, 0, Viewport.X)
+        MinY = math.clamp(MinY, 0, Viewport.Y)
+        MaxX = math.clamp(MaxX, 0, Viewport.X)
+        MaxY = math.clamp(MaxY, 0, Viewport.Y)
+
+        ESP.Box.Position = UDim2.fromOffset(MinX, MinY)
+        ESP.Box.Size = UDim2.fromOffset(math.max(2, MaxX - MinX), math.max(2, MaxY - MinY))
+        ESP.Box.Visible = true
+        ESP.BoxGui.Enabled = true
     end
+
     ESP.Billboard.Enabled = true
 end
 
 local function SetupESPPlayer(Player)
-    if Player == LocalPlayer then
-        return
-    end
+    if Player == LocalPlayer then return end
 
     CreateESP(Player, ESPObjects, "MOUSED")
     CreateESP(Player, TeamESPObjects, "MOUSED_Team")
 
-    Player.CharacterAdded:Connect(function(Character)
-        task.wait(0.2)
+    if ESPCharacterConnections[Player] then
+        ESPCharacterConnections[Player]:Disconnect()
+    end
 
+    ESPCharacterConnections[Player] = Player.CharacterAdded:Connect(function()
+        task.wait(0.25)
         local Normal = ESPObjects[Player]
         local Team = TeamESPObjects[Player]
-
-        if Normal then
-            AttachESP(Player, Normal)
-        end
-
-        if Team then
-            AttachESP(Player, Team)
-        end
+        if Normal then AttachESP(Player, Normal) end
+        if Team then AttachESP(Player, Team) end
     end)
+
+    if Player.Character then
+        AttachESP(Player, ESPObjects[Player])
+        AttachESP(Player, TeamESPObjects[Player])
+    end
 end
 
 local function UpdateNormalESP()
-    local HighlightCount = 0
-
     for Player, ESP in pairs(ESPObjects) do
-        local Color = ESPColor
-
-        if RainbowESP then
-            Color = Color3.fromHSV((tick() % 5) / 5, 1, 1)
-        end
-
-        UpdateESPObject(
-            Player,
-            ESP,
-            ESPEnabled,
-            Color,
-            ESPTransparency,
-            HighlightCount >= 31
-        )
-
-        if HighlightCount < 31 then
-            HighlightCount = HighlightCount + 1
-        end
+        UpdateESPObject(Player, ESP, ESPEnabled, ESPColor, ESPTransparency)
     end
 end
 
 local function UpdateTeamESP()
     for Player, ESP in pairs(TeamESPObjects) do
-        local Color
-
-        if LocalPlayer.Team and Player.Team == LocalPlayer.Team then
-            Color = TeamESPColor
-        else
-            Color = OpponentESPColor
-        end
-
-        UpdateESPObject(
-            Player,
-            ESP,
-            TeamESPEnabled,
-            Color,
-            TeamESPTransparency
-        )
+        local Color = (LocalPlayer.Team and Player.Team == LocalPlayer.Team)
+            and TeamESPColor or OpponentESPColor
+        UpdateESPObject(Player, ESP, TeamESPEnabled, Color, TeamESPTransparency)
     end
 end
 
 local function EnableNormalESP()
     ESPEnabled = true
-
     if not ESPUpdateConnection then
         ESPUpdateConnection = RunService.RenderStepped:Connect(UpdateNormalESP)
     end
@@ -772,22 +724,15 @@ end
 
 local function DisableNormalESP()
     ESPEnabled = false
-
     if ESPUpdateConnection then
         ESPUpdateConnection:Disconnect()
         ESPUpdateConnection = nil
     end
-
-    for _, ESP in pairs(ESPObjects) do
-        ESP.Highlight.Enabled = false
-        ESP.Billboard.Enabled = false
-        ClearBodyPartBoxes(ESP)
-    end
+    for _, ESP in pairs(ESPObjects) do ClearESPVisuals(ESP) end
 end
 
 local function EnableTeamESP()
     TeamESPEnabled = true
-
     if not TeamESPUpdateConnection then
         TeamESPUpdateConnection = RunService.RenderStepped:Connect(UpdateTeamESP)
     end
@@ -795,37 +740,35 @@ end
 
 local function DisableTeamESP()
     TeamESPEnabled = false
-
     if TeamESPUpdateConnection then
         TeamESPUpdateConnection:Disconnect()
         TeamESPUpdateConnection = nil
     end
-
-    for _, ESP in pairs(TeamESPObjects) do
-        ESP.Highlight.Enabled = false
-        ESP.Billboard.Enabled = false
-        ClearBodyPartBoxes(ESP)
-    end
+    for _, ESP in pairs(TeamESPObjects) do ClearESPVisuals(ESP) end
 end
 
-Players.PlayerAdded:Connect(function(Player)
-    SetupESPPlayer(Player)
-end)
+Players.PlayerAdded:Connect(SetupESPPlayer)
 
 Players.PlayerRemoving:Connect(function(Player)
-    local Normal = ESPObjects[Player]
+    local Connection = ESPCharacterConnections[Player]
+    if Connection then
+        Connection:Disconnect()
+        ESPCharacterConnections[Player] = nil
+    end
 
+    local Normal = ESPObjects[Player]
     if Normal then
         Normal.Highlight:Destroy()
         Normal.Billboard:Destroy()
+        Normal.BoxGui:Destroy()
         ESPObjects[Player] = nil
     end
 
     local Team = TeamESPObjects[Player]
-
     if Team then
         Team.Highlight:Destroy()
         Team.Billboard:Destroy()
+        Team.BoxGui:Destroy()
         TeamESPObjects[Player] = nil
     end
 end)
@@ -833,6 +776,7 @@ end)
 for _, Player in ipairs(Players:GetPlayers()) do
     SetupESPPlayer(Player)
 end
+
 -- Setting up the UI
 local Window = Rayfield:CreateWindow({
     Name = "MOUSED universal hub",
@@ -3655,17 +3599,6 @@ VisualsTab:CreateToggle({
 })
 
 
-VisualsTab:CreateToggle({
-    Name = "Rainbow ESP",
-    CurrentValue = false,
-    Flag = "RainbowESPToggle",
-
-    Callback = function(Value)
-        RainbowESP = Value
-    end
-})
-
-
 VisualsTab:CreateColorPicker({
     Name = "ESP Color",
     Color = ESPColor,
@@ -4085,6 +4018,279 @@ local function UpdateMovementConnection()
     end
 end
 
+function ExtraMovementState.UpdateFakeInvisHighlight()
+    if ExtraMovementState.FakeInvisHighlight then
+        ExtraMovementState.FakeInvisHighlight.Adornee = LocalPlayer.Character
+        ExtraMovementState.FakeInvisHighlight.Enabled = ExtraMovementState.FakeInvisEnabled
+            and ExtraMovementState.FakeInvisAccurate
+            and ExtraMovementState.FakeInvisHighlightEnabled
+    elseif ExtraMovementState.FakeInvisHighlightEnabled then
+        local PlayerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if PlayerGui then
+            ExtraMovementState.FakeInvisHighlight = Instance.new("Highlight")
+            ExtraMovementState.FakeInvisHighlight.Name = "MOUSED_FakeInvisHighlight"
+            ExtraMovementState.FakeInvisHighlight.Adornee = LocalPlayer.Character
+            ExtraMovementState.FakeInvisHighlight.Enabled = ExtraMovementState.FakeInvisEnabled and ExtraMovementState.FakeInvisAccurate and ExtraMovementState.FakeInvisHighlightEnabled
+            ExtraMovementState.FakeInvisHighlight.Parent = PlayerGui
+        end
+    end
+end
+
+function ExtraMovementState.StopFakeInvis()
+    for _, Connection in ipairs(ExtraMovementState.FakeInvisConnections) do
+        Connection:Disconnect()
+    end
+    table.clear(ExtraMovementState.FakeInvisConnections)
+
+    RunService:UnbindFromRenderStep(ExtraMovementState.FakeInvisRenderStepName)
+    RunService:UnbindFromRenderStep(ExtraMovementState.FakeInvisLateRenderStepName)
+
+    if ExtraMovementState.FakeInvisRoot and ExtraMovementState.FakeInvisRoot.Parent and ExtraMovementState.FakeInvisOriginalCFrame then
+        ExtraMovementState.FakeInvisRoot.CFrame = ExtraMovementState.FakeInvisOriginalCFrame
+    end
+
+    ExtraMovementState.FakeInvisRoot = nil
+    ExtraMovementState.FakeInvisOriginalCFrame = nil
+    ExtraMovementState.UpdateFakeInvisHighlight()
+end
+
+function ExtraMovementState.StartFakeInvis()
+    if not ExtraMovementState.FakeInvisEnabled or #ExtraMovementState.FakeInvisConnections > 0 then
+        return
+    end
+
+    local Root = GetCharacterRoot()
+    if not Root then
+        return
+    end
+
+    ExtraMovementState.FakeInvisRoot = Root
+    ExtraMovementState.FakeInvisOriginalCFrame = Root.CFrame
+
+    local function RestoreVisiblePosition()
+        local CurrentRoot = GetCharacterRoot()
+        if not CurrentRoot then
+            return
+        end
+
+        if CurrentRoot ~= ExtraMovementState.FakeInvisRoot then
+            ExtraMovementState.FakeInvisRoot = CurrentRoot
+            ExtraMovementState.FakeInvisOriginalCFrame = CurrentRoot.CFrame
+        end
+
+        CurrentRoot.CFrame = ExtraMovementState.FakeInvisOriginalCFrame
+    end
+
+    local function OffsetUnderground()
+        local CurrentRoot = GetCharacterRoot()
+        if not CurrentRoot then
+            return
+        end
+
+        if CurrentRoot ~= ExtraMovementState.FakeInvisRoot then
+            ExtraMovementState.FakeInvisRoot = CurrentRoot
+            ExtraMovementState.FakeInvisOriginalCFrame = CurrentRoot.CFrame
+        end
+
+        ExtraMovementState.FakeInvisOriginalCFrame = CurrentRoot.CFrame
+        CurrentRoot.CFrame = CFrame.new(
+            CurrentRoot.Position - Vector3.new(0, ExtraMovementState.FakeInvisVerticalOffset, 0)
+        ) * CFrame.Angles(math.rad(90), 0, 0)
+    end
+
+    if ExtraMovementState.FakeInvisAccurate then
+        RunService:BindToRenderStep(
+            ExtraMovementState.FakeInvisRenderStepName,
+            Enum.RenderPriority.Camera.Value - 5,
+            RestoreVisiblePosition
+        )
+        RunService:BindToRenderStep(
+            ExtraMovementState.FakeInvisLateRenderStepName,
+            Enum.RenderPriority.Camera.Value + 5,
+            OffsetUnderground
+        )
+        table.insert(ExtraMovementState.FakeInvisConnections, RunService.PreAnimation:Connect(RestoreVisiblePosition))
+    else
+        RunService:BindToRenderStep(
+            ExtraMovementState.FakeInvisRenderStepName,
+            Enum.RenderPriority.Camera.Value - 1,
+            RestoreVisiblePosition
+        )
+    end
+
+    table.insert(ExtraMovementState.FakeInvisConnections, RunService.PostSimulation:Connect(OffsetUnderground))
+    ExtraMovementState.UpdateFakeInvisHighlight()
+end
+
+function ExtraMovementState.RestartFakeInvis()
+    ExtraMovementState.StopFakeInvis()
+    if ExtraMovementState.FakeInvisEnabled then
+        ExtraMovementState.StartFakeInvis()
+    end
+end
+
+function ExtraMovementState.CreateFloatMobileControls()
+    if not UserInputService.TouchEnabled or UserInputService.KeyboardEnabled then
+        return
+    end
+    if ExtraMovementState.FloatMobileGui then
+        ExtraMovementState.FloatMobileGui:Destroy()
+        ExtraMovementState.FloatMobileGui = nil
+    end
+
+    local PlayerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+    local Screen = Instance.new("ScreenGui")
+    Screen.Name = "MOUSED_FloatControls"
+    Screen.ResetOnSpawn = false
+    Screen.IgnoreGuiInset = true
+    Screen.DisplayOrder = 20
+    Screen.Parent = PlayerGui
+    ExtraMovementState.FloatMobileGui = Screen
+
+    local function MakeHoldButton(Name, Text, Position, MoveUp)
+        local Button = Instance.new("TextButton")
+        Button.Name = Name
+        Button.Text = Text
+        Button.Size = UDim2.fromOffset(68, 58)
+        Button.Position = Position
+        Button.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+        Button.BackgroundTransparency = 0.15
+        Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Button.TextScaled = true
+        Button.Font = Enum.Font.GothamBold
+        Button.AutoButtonColor = true
+        Button.Active = true
+        Button.Parent = Screen
+
+        local Corner = Instance.new("UICorner")
+        Corner.CornerRadius = UDim.new(0, 12)
+        Corner.Parent = Button
+
+        Button.InputBegan:Connect(function(Input)
+            if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if MoveUp then
+                    ExtraMovementState.FloatMoveUpHeld = true
+                else
+                    ExtraMovementState.FloatMoveDownHeld = true
+                end
+            end
+        end)
+        Button.InputEnded:Connect(function(Input)
+            if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if MoveUp then
+                    ExtraMovementState.FloatMoveUpHeld = false
+                else
+                    ExtraMovementState.FloatMoveDownHeld = false
+                end
+            end
+        end)
+        return Button
+    end
+
+    MakeHoldButton("FloatUpButton", "▲ UP", UDim2.new(1, -154, 0.55, 0), true)
+    MakeHoldButton("FloatDownButton", "▼ DOWN", UDim2.new(1, -154, 0.55, 66), false)
+
+    if ExtraMovementState.FloatMobileInputEndedConnection then
+        ExtraMovementState.FloatMobileInputEndedConnection:Disconnect()
+    end
+    ExtraMovementState.FloatMobileInputEndedConnection = UserInputService.InputEnded:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+            ExtraMovementState.FloatMoveUpHeld = false
+            ExtraMovementState.FloatMoveDownHeld = false
+        end
+    end)
+end
+
+function ExtraMovementState.StopFloatPlatform()
+    if ExtraMovementState.FloatUpdateConnection then
+        ExtraMovementState.FloatUpdateConnection:Disconnect()
+        ExtraMovementState.FloatUpdateConnection = nil
+    end
+
+    if ExtraMovementState.FloatMobileInputEndedConnection then
+        ExtraMovementState.FloatMobileInputEndedConnection:Disconnect()
+        ExtraMovementState.FloatMobileInputEndedConnection = nil
+    end
+    if ExtraMovementState.FloatMobileGui then
+        ExtraMovementState.FloatMobileGui:Destroy()
+        ExtraMovementState.FloatMobileGui = nil
+    end
+    ExtraMovementState.FloatMoveUpHeld = false
+    ExtraMovementState.FloatMoveDownHeld = false
+
+    if ExtraMovementState.FloatPlatform then
+        ExtraMovementState.FloatPlatform:Destroy()
+        ExtraMovementState.FloatPlatform = nil
+    end
+
+    ExtraMovementState.FloatPlatformCharacter = nil
+    ExtraMovementState.FloatPlatformY = nil
+end
+
+function ExtraMovementState.StartFloatPlatform()
+    if not ExtraMovementState.FloatPlatformEnabled then
+        return
+    end
+
+    ExtraMovementState.StopFloatPlatform()
+
+    local Character = LocalPlayer.Character
+    local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+    if not Root then
+        return
+    end
+
+    local Platform = Instance.new("Part")
+    Platform.Name = "MOUSED_FloatPlatform"
+    Platform.Size = Vector3.new(ExtraMovementState.FloatPlatformSize, 0.5, ExtraMovementState.FloatPlatformSize)
+    Platform.BottomSurface = Enum.SurfaceType.Smooth
+    Platform.TopSurface = Enum.SurfaceType.Smooth
+    Platform.Material = Enum.Material.Plastic
+    Platform.Color = Color3.fromRGB(128, 128, 128)
+    Platform.Transparency = ExtraMovementState.FloatPlatformTransparency
+    Platform.Anchored = true
+    Platform.CanCollide = true
+    Platform.CanTouch = false
+    Platform.CanQuery = false
+    Platform.Position = Root.Position - Vector3.new(0, ExtraMovementState.FloatPlatformOffset, 0)
+    Platform.Parent = Workspace
+
+    ExtraMovementState.FloatPlatform = Platform
+    ExtraMovementState.FloatPlatformCharacter = Character
+    ExtraMovementState.FloatPlatformY = Platform.Position.Y
+    ExtraMovementState.CreateFloatMobileControls()
+
+    ExtraMovementState.FloatUpdateConnection = RunService.Heartbeat:Connect(function()
+        local CurrentCharacter = LocalPlayer.Character
+        local CurrentRoot = CurrentCharacter
+            and CurrentCharacter:FindFirstChild("HumanoidRootPart")
+
+        if not ExtraMovementState.FloatPlatform or not ExtraMovementState.FloatPlatform.Parent or not CurrentRoot then
+            return
+        end
+
+        if CurrentCharacter ~= ExtraMovementState.FloatPlatformCharacter then
+            ExtraMovementState.FloatPlatformCharacter = CurrentCharacter
+            ExtraMovementState.FloatPlatformY = CurrentRoot.Position.Y - ExtraMovementState.FloatPlatformOffset
+        end
+
+        -- Ignore keyboard E/Q while the player is typing in chat or another text box.
+        local IsTyping = UserInputService:GetFocusedTextBox() ~= nil
+        local MoveUp = (not IsTyping and UserInputService:IsKeyDown(Enum.KeyCode.E))
+            or ExtraMovementState.FloatMoveUpHeld
+        local MoveDown = (not IsTyping and UserInputService:IsKeyDown(Enum.KeyCode.Q))
+            or ExtraMovementState.FloatMoveDownHeld
+        if MoveUp ~= MoveDown then
+            ExtraMovementState.FloatPlatformY += MoveUp and ExtraMovementState.FloatPlatformMoveSpeed or -ExtraMovementState.FloatPlatformMoveSpeed
+        end
+
+        ExtraMovementState.FloatPlatform.Position = Vector3.new(
+            CurrentRoot.Position.X,
+            ExtraMovementState.FloatPlatformY,
+            CurrentRoot.Position.Z
+        )
+    end)
+end
 local function StopFly()
     if FlyConnection then
         FlyConnection:Disconnect()
@@ -4205,12 +4411,19 @@ local function StartFly()
             end
             -- E/Q only control Fly when they are NOT being used
             -- by a nearby ProximityPrompt.
+            local ControlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+                or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+
             if UserInputService:IsKeyDown(Enum.KeyCode.E)
+                and not ExtraMovementState.FloatPlatformEnabled
+                and not ControlDown
                 and not IsFlyKeyBlocked(Enum.KeyCode.E) then
                 Vertical += 1
             end
 
             if UserInputService:IsKeyDown(Enum.KeyCode.Q)
+                and not ExtraMovementState.FloatPlatformEnabled
+                and not ControlDown
                 and not IsFlyKeyBlocked(Enum.KeyCode.Q) then
                 Vertical -= 1
             end
@@ -4254,6 +4467,14 @@ LocalPlayer.CharacterAdded:Connect(function(character)
 
     if GravityEnabled then
         Workspace.Gravity = CurrentGravity
+    end
+
+    if ExtraMovementState.FakeInvisEnabled then
+        ExtraMovementState.StopFakeInvis()
+        ExtraMovementState.StartFakeInvis()
+    end
+    if ExtraMovementState.FloatPlatformEnabled then
+        ExtraMovementState.StartFloatPlatform()
     end
 end)
 
@@ -4358,6 +4579,133 @@ MovementTab:CreateSlider({
     Callback = function(Value)
         FlySpeed = Value
     end
+})
+
+MovementTab:CreateSection("Fake Invisibility")
+
+MovementTab:CreateToggle({
+    Name = "Fake Invis",
+    CurrentValue = false,
+    Flag = "FakeInvis",
+    Callback = function(Value)
+        ExtraMovementState.FakeInvisEnabled = Value
+        if Value then
+            ExtraMovementState.StartFakeInvis()
+        else
+            ExtraMovementState.StopFakeInvis()
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Fake Invis Offset",
+    Range = {1, 50},
+    Increment = 1,
+    CurrentValue = ExtraMovementState.FakeInvisVerticalOffset,
+    Flag = "FakeInvisOffset",
+    Callback = function(Value)
+        ExtraMovementState.FakeInvisVerticalOffset = Value
+    end
+})
+
+MovementTab:CreateToggle({
+    Name = "Accurate Character Representation",
+    CurrentValue = false,
+    Flag = "FakeInvisAccurate",
+    Callback = function(Value)
+        ExtraMovementState.FakeInvisAccurate = Value
+        ExtraMovementState.UpdateFakeInvisHighlight()
+        if ExtraMovementState.FakeInvisEnabled then
+            ExtraMovementState.RestartFakeInvis()
+        end
+    end
+})
+
+MovementTab:CreateToggle({
+    Name = "Highlight Character Representation",
+    CurrentValue = false,
+    Flag = "FakeInvisHighlight",
+    Callback = function(Value)
+        ExtraMovementState.FakeInvisHighlightEnabled = Value
+        ExtraMovementState.UpdateFakeInvisHighlight()
+    end
+})
+
+MovementTab:CreateSection("Float Platform")
+
+MovementTab:CreateToggle({
+    Name = "Float",
+    CurrentValue = false,
+    Flag = "FloatPlatform",
+    Callback = function(Value)
+        ExtraMovementState.FloatPlatformEnabled = Value
+        if Value then
+            ExtraMovementState.StartFloatPlatform()
+        else
+            ExtraMovementState.StopFloatPlatform()
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Float Platform Size",
+    Range = {1, 50},
+    Increment = 1,
+    CurrentValue = ExtraMovementState.FloatPlatformSize,
+    Flag = "FloatPlatformSize",
+    Callback = function(Value)
+        ExtraMovementState.FloatPlatformSize = Value
+        if ExtraMovementState.FloatPlatform then
+            ExtraMovementState.FloatPlatform.Size = Vector3.new(Value, 0.5, Value)
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Float Platform Transparency",
+    Range = {0, 1},
+    Increment = 0.05,
+    CurrentValue = ExtraMovementState.FloatPlatformTransparency,
+    Flag = "FloatPlatformTransparency",
+    Callback = function(Value)
+        ExtraMovementState.FloatPlatformTransparency = Value
+        if ExtraMovementState.FloatPlatform then
+            ExtraMovementState.FloatPlatform.Transparency = Value
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Float Platform Offset",
+    Range = {1, 50},
+    Increment = 1,
+    CurrentValue = ExtraMovementState.FloatPlatformOffset,
+    Flag = "FloatPlatformOffset",
+    Callback = function(Value)
+        ExtraMovementState.FloatPlatformOffset = Value
+        if ExtraMovementState.FloatPlatform and ExtraMovementState.FloatPlatformCharacter == LocalPlayer.Character then
+            local Root = GetCharacterRoot()
+            if Root then
+                ExtraMovementState.FloatPlatformY = Root.Position.Y - Value
+            end
+        end
+    end
+})
+
+MovementTab:CreateSlider({
+    Name = "Float Platform Move Speed",
+    Range = {0.1, 5},
+    Increment = 0.1,
+    CurrentValue = ExtraMovementState.FloatPlatformMoveSpeed,
+    Flag = "FloatPlatformMoveSpeed",
+    Callback = function(Value)
+        ExtraMovementState.FloatPlatformMoveSpeed = Value
+    end
+})
+
+MovementTab:CreateParagraph({
+    Title = "Float Controls",
+    Content = "Hold E to raise the platform or Q to lower it. On mobile, hold the UP/DOWN buttons while Float is enabled."
 })
 
 MovementTab:CreateToggle({
@@ -5141,6 +5489,8 @@ SettingsTab:CreateButton({
         HipHeightEnabled = false
         NoclipEnabled = false
         FlyEnabled = false
+        ExtraMovementState.FakeInvisEnabled = false
+        ExtraMovementState.FloatPlatformEnabled = false
         -- Stop active connections
         if JumpConnection then
             JumpConnection:Disconnect()
@@ -5158,6 +5508,8 @@ SettingsTab:CreateButton({
         end
         -- Stop Fly
         StopFly()
+        ExtraMovementState.StopFakeInvis()
+        ExtraMovementState.StopFloatPlatform()
         -- Restore normal movement
         RestoreMovement()
         -- Restore gravity
@@ -5191,6 +5543,15 @@ SettingsTab:CreateButton({
         })
     end
 })
+
+table.insert(ExtraCleanups, function()
+    ExtraMovementState.StopFakeInvis()
+    if ExtraMovementState.FakeInvisHighlight then
+        ExtraMovementState.FakeInvisHighlight:Destroy()
+        ExtraMovementState.FakeInvisHighlight = nil
+    end
+end)
+table.insert(ExtraCleanups, ExtraMovementState.StopFloatPlatform)
 
 SettingsTab:CreateButton({
     Name = "Destroy UI",
@@ -5304,7 +5665,7 @@ NotifyExecutorCapabilities()
 NotifyWelderCompatibility()
 Rayfield:Notify({
     Title = "MOUSED hub",
-    Content = "Version 1.2.9 loaded successfully!",
+    Content = "Version 1.3.0 loaded successfully!",
     Duration = 3,
     Image = nil
 })
